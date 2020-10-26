@@ -29,3 +29,13 @@ func (wt WriteTicket) Write() error {
 	filename := ObjectPathString(string(wt.TicketID)) + "/obj"
 	return putBytes(filename, wt.Data)
 }
+
+// NewWriteTicket Creates a new write ticket with first 8 bytes of ticketID,
+// first 8 bytes of checksum, and all of the data bytes
+func NewWriteTicket(ticketID, checksum string, data []byte) WriteTicket {
+	return WriteTicket{
+		TicketID: []byte(ticketID)[0:8],
+		Checksum: []byte(checksum)[0:8],
+		Data:     data,
+	}
+}

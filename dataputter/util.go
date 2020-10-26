@@ -2,6 +2,7 @@
 package dataputter
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -9,26 +10,24 @@ import (
 // ObjectPathComponents Provides a list of path components for an object
 // as chunks of two characters
 func ObjectPathComponents(objectID string) []string {
-	s := make([]string, len(objectID)/2)
-	for i := 0; i < len(objectID); i += 2 {
-		s[i/2] = objectID[i : i+2]
-	}
-	return s
+	return strings.Split(objectID, "")
 }
 
 // ObjectPathString Provide the object path string
 func ObjectPathString(objectID string) string {
-	return strings.Join(
-		ObjectPathComponents(objectID),
-		string(os.PathSeparator),
-	)
+	return strings.Join(ObjectPathComponents(objectID), string(os.PathSeparator))
+
 }
 
 // CreateObjectPath Creates the directory structure to store bytes
 // of data in the tail'th node of the path components
 func CreateObjectPath(objectID string) error {
 	filepath := ObjectPathString(objectID)
-	return os.MkdirAll(filepath, 0755)
+	fmt.Printf("CreateObjectPath: %s :%#v:\n", filepath, filepath)
+	if strings.Contains(filepath, string(os.PathSeparator)) {
+		return os.MkdirAll(filepath, 0755)
+	}
+	return os.Mkdir(filepath, 0755)
 }
 
 // StoreBytes Stores the bytes from a write ticket somewhere

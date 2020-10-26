@@ -35,6 +35,7 @@ type PutResponse struct {
 // Does not create paths
 func putBytes(filename string, bytes []byte) error {
 	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
+	defer f.Close()
 	if err != nil {
 		return err
 	}
