@@ -14,8 +14,22 @@ import (
 	"net"
 )
 
+// PutterRequest : Serializable request transmissible to any
+// DataPutter node
+type PutterRequest interface {
+	Write() error
+	String() string
+}
+
+// PutterResponse : Sent by Putter when request has finished
+type PutterResponse struct {
+	ObjectID string
+	TicketID []byte
+	Status   int //
+}
+
 // RouterServer Listens for bytes and creates WriteTickets
-func RouterServer(port int, ticketIntake chan WriteTicket) error {
+func RouterServer(port int, putterRequests chan PutterRequest) error {
 	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return err
@@ -27,79 +41,69 @@ func RouterServer(port int, ticketIntake chan WriteTicket) error {
 			fmt.Printf("Error in connection: %v\n", err)
 			continue
 		}
-		go streamHandler(conn, ticketIntake)
+		go putterRequestHandler(conn, putterRequests)
 	}
 }
 
-// TicketGenerator Generates tickets from "0" to "Z" as byte string
-func TicketGenerator(lastTicket []byte) []byte {
-	if len(lastTicket) == 0 {
-		return []byte("0")
+// PutterResponseServer : Listens for TicketID and Status responses
+func PutterResponseServer(port int, putterResponses chan PutterResponse) error {
+	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
 	}
-	// 8 bytes is the limit (check for Z/90)
-	if len(lastTicket) == 8 && lastTicket[0] == 90 {
-		fmt.Println("Warning: End of tickets")
-		return lastTicket
-	}
-	newTicket := make([]byte, len(lastTicket))
-	copy(newTicket, lastTicket)
-
-	// A(65) - Z(90)
-	// 0(48) - 9(57)
-	// a(97) - z(122)
-	for i := len(lastTicket) - 1; i >= 0; i-- {
-		d := lastTicket[i]
-		// 0 - 9
-		if d >= 48 && d < 57 {
-			newTicket[i] = d + 1
-			break
-			// A - Z
-		} else if d == 57 || (d >= 65 && d < 90) {
-			if d == 57 {
-				// Move 9 to A
-				newTicket[i] = 65
-				break
-			} else {
-				newTicket[i] = d + 1
-				break
-			}
-			// a - z
-			// Disabled for windows
-			// } else if d == 90 || (d >= 97 && d < 122) {
-			// 	if d == 90 {
-			// 		// Move Z to a
-			// 		newTicket[i] = 97
-			// 	} else {
-			// 		newTicket[i] = d + 1
-			// 	}
-			// initialize to 0
-		} else if d == 0 {
-			return append([]byte{48}, newTicket...)
-
-		} else {
-			// Need to add more bytes for short strings
-			// If this is the 0th byte, no more allocations can be done)
-			if i == 0 {
-				for i := 0; i < len(newTicket); i++ {
-					newTicket[i] = byte(48)
-				}
-				return append([]byte{48}, newTicket...)
-			}
+	fmt.Printf("PutterResponseServer running on port %d\n", port)
+	for {
+		conn, err := s.Accept()
+		if err != nil {
+			fmt.Printf("Error in connection: %v\n", err)
+			continue
 		}
-
+		fmt.Println("Handling PutterResponse connection")
+		go putterResponseHandler(conn, putterResponses)
 	}
-
-	return newTicket
 }
 
-func streamHandler(c net.Conn, ticketIntake chan WriteTicket) error {
+func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) error {
 	defer c.Close()
-	fmt.Println("Handling router connection")
+
+	// [8B TicketID][1B Status]
+	dataStream := make([]byte, 9)
+
+	n, err := c.Read(dataStream)
+	if err != nil {
+		fmt.Printf("Error reading putterResponse: %v\n", err)
+		return err
+	}
+	// [8B Ticket][1B Status]
+	if n == 9 {
+		fmt.Printf("Read response: %#v\n", dataStream)
+		putterResponses <- PutterResponse{
+			TicketID: dataStream[0:8],
+			Status:   int(dataStream[8]),
+		}
+		return nil
+	}
+	return nil
+}
+
+var objectID []byte
+
+// putterRequestHandler : Handles a single TCP connection creating an
+// ObjectID for the file and then WriteTickets for each byte region
+func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
+	defer c.Close()
+
+	// Grant a new ObjectID for this TCP connection / file
+	objectID = TicketGenerator(objectID)
+	fmt.Printf("Handling router connection as Object: %s\n", string(objectID))
+
 	dataStream := make([]byte, 1458)
 	var err error
 	var n int
 	var byteCount = 0
 	var ticketID []byte
+
+	// Write regions of bytes for this object
 	for {
 		ticketID = TicketGenerator(ticketID)
 		n, err = c.Read(dataStream)
@@ -107,14 +111,22 @@ func streamHandler(c net.Conn, ticketIntake chan WriteTicket) error {
 			fmt.Printf("Error reading bytes from %d onward: %v\n", byteCount, err)
 			return err
 		}
+		// Send putter request to writer
 		if n > 0 {
+			putterRequests <- ObjectWriteTicket{
+				ObjectID:  string(objectID),
+				ByteStart: int64(byteCount),
+				ByteEnd:   int64(byteCount + n),
+				ByteCount: int64(n),
+				WriteTicket: WriteTicket{
+					TicketID: ticketID,
+					Checksum: make([]byte, 8),
+					Data:     dataStream,
+				},
+			}
+
 			byteCount += n
 			fmt.Printf("Read %d of %d bytes\n", n, byteCount)
-			ticketIntake <- WriteTicket{
-				TicketID: ticketID,
-				Checksum: make([]byte, 8),
-				Data:     dataStream,
-			}
 		}
 		if err != nil && err == io.EOF {
 			break

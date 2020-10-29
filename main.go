@@ -16,8 +16,6 @@ import (
 
 func main() {
 	fmt.Println("Hello old friend")
-	intake := make(chan dataputter.WriteTicket, 4)
-	defer close(intake)
 
 	if len(os.Args) <= 1 {
 		fmt.Println("USAGE: app [putter|loopback|router]")
@@ -29,18 +27,39 @@ func main() {
 	switch startupMode {
 	// Byte Putter Router server
 	case "router":
-		go func(work chan dataputter.WriteTicket) {
-			for wt := range work {
-				fmt.Printf("\tRouter ticket %d %s\n", len(wt.TicketID), string(wt.TicketID))
-				fmt.Printf("\tOutpath: %s\n", dataputter.ObjectPathString(string(wt.TicketID)))
-				if err := wt.Write(); err != nil {
-					fmt.Printf("Error writing ticket %s: %v\n", string(wt.TicketID), err)
+		intake := make(chan dataputter.PutterRequest, 4)
+		putterResponses := make(chan dataputter.PutterResponse, 4)
+		defer close(intake)
+		defer close(putterResponses)
+
+		// Simulate DataPutter node
+		go func(work chan dataputter.PutterRequest) {
+			for putterRequest := range work {
+				if err := putterRequest.Write(); err != nil {
+					fmt.Printf("Error writing ticket %s: %v\n", putterRequest, err)
 				}
 			}
 		}(intake)
-		dataputter.RouterServer(5001, intake)
+
+		// ResponseHandler
+		go func(responses chan dataputter.PutterResponse) {
+			for response := range responses {
+				fmt.Printf("Ticket %s Status %d\n",
+					string(response.TicketID),
+					response.Status,
+				)
+			}
+		}(putterResponses)
+		// Listen for inbound files
+		go dataputter.RouterServer(5001, intake)
+		// Listen for Putter write responses (block)
+		dataputter.PutterResponseServer(5002, putterResponses)
+
 	// Byte Putter server
 	case "putter":
+		intake := make(chan dataputter.WriteTicket, 4)
+		defer close(intake)
+
 		go dataputter.WriteTicketHandler(intake)
 
 		if err := dataputter.CreateServer(":5000", intake); err != nil {

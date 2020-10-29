@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+var (
+	// dataRoot: Basepath for installing objects/bytes
+	dataRoot = "data"
+)
+
 // ObjectPathComponents Provides a list of path components for an object
 // as chunks of two characters
 func ObjectPathComponents(objectID string) []string {
@@ -15,7 +20,10 @@ func ObjectPathComponents(objectID string) []string {
 
 // ObjectPathString Provide the object path string
 func ObjectPathString(objectID string) string {
-	return strings.Join(ObjectPathComponents(objectID), string(os.PathSeparator))
+	return strings.Join(
+		append([]string{dataRoot}, ObjectPathComponents(objectID)...),
+		string(os.PathSeparator),
+	)
 
 }
 

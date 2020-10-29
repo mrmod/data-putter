@@ -12,6 +12,25 @@ type WriteTicket struct {
 	Data []byte
 }
 
+// ObjectWriteTicket Contains a WriteTicket for a specific object
+type ObjectWriteTicket struct {
+	// ObjectID : Opaque unique string
+	ObjectID string
+	// Positions of this Write ticket
+	ByteStart, ByteEnd, ByteCount int64
+	WriteTicket
+}
+
+// DataAllocation : Track where bytes have been written to
+type DataAllocation struct {
+	ObjectWriteTicket
+	PutterNodeID string
+}
+
+func (owt ObjectWriteTicket) String() string {
+	return fmt.Sprintf("Object: %s\nWriteTicket: %s", owt.ObjectID, owt.WriteTicket)
+}
+
 func (wt WriteTicket) String() string {
 	return fmt.Sprintf("TicketID: %s\n\tChecksum: %s\n\tData:\n%v\n",
 		string(wt.TicketID),
