@@ -27,8 +27,17 @@ type DataAllocation struct {
 	PutterNodeID string
 }
 
+// Bytes of the WriteTicket.TicketID
+func (owt ObjectWriteTicket) GetTicketID() []byte {
+	return owt.WriteTicket.GetTicketID()
+}
 func (owt ObjectWriteTicket) String() string {
 	return fmt.Sprintf("Object: %s\nWriteTicket: %s", owt.ObjectID, owt.WriteTicket)
+}
+
+// Bytes of the WriteTicket.TicketID bytes
+func (wt WriteTicket) GetTicketID() []byte {
+	return wt.TicketID
 }
 
 func (wt WriteTicket) String() string {

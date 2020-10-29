@@ -1,34 +1,21 @@
-// Package dataputter handles requests from remote systems to store bytes,
+// DataPutter
+//
+// Handles requests from remote systems to store bytes,
 // which are associated with an ObjectID, to disk.
-//
-//     # Practical Operation
-//
-//     Client -> APIPutRequest{bytes} -> Server
-//     Server -> putBytes(PutRequest.new(APIPutRequest)) -> PutResponse
 package dataputter
 
-import "os"
+import (
+	"fmt"
+	"net"
+	"os"
+	"strings"
+)
 
 // PutRequest Request with data to put somewhere
 type PutRequest struct {
 	ObjectID           string
 	ByteStart, ByteEnd int
 	Bytes              []byte
-}
-
-// APIPutRequest Request from remote system to put data somewhere
-type APIPutRequest struct {
-	ObjectID, Checksum string
-	Bytes              []byte
-}
-
-// PutResponse Response given to remote systems when a file is
-// created for a APIPutRequest
-type PutResponse struct {
-	ObjectID, PutID    string
-	ByteStart, ByteEnd int
-	NodeID             string
-	Success            bool
 }
 
 // putBytes: Always write bytes to filename, creating as needed
@@ -46,16 +33,47 @@ func putBytes(filename string, bytes []byte) error {
 	return nil
 }
 
-// Write Commit an APIPutRequest to disk
-// * Accepts a APIPutRequest.
-// * Writes Bytes from Request to Disk
-func Write(r *APIPutRequest) PutResponse {
-	err := putBytes(r.ObjectID, r.Bytes)
+func sendTCPSimple(hostPort string, data []byte) error {
+	c, err := net.Dial("tcp", hostPort)
 	if err != nil {
-		return PutResponse{
-			Success:  false,
-			ObjectID: r.ObjectID,
-		}
+		return err
 	}
-	return PutResponse{}
+
+	n, err := c.Write(data)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Wrote %d byte response to %s\n", n, hostPort)
+	return nil
+}
+
+// Respond to a put request sent to this datanode with a statusCode
+func SendPutResponse(hostPort string, ticketID []byte, statusCode int) error {
+	var host string
+	port := "5002"
+
+	addrParts := strings.Split(hostPort, ":")
+	switch len(addrParts) {
+	case 1:
+		host = addrParts[0]
+	case 2:
+		host = addrParts[0]
+		port = addrParts[1]
+	default:
+		return fmt.Errorf("Need a host:port to send responses to")
+	}
+	// Pad bytes into 8-byte packet
+	ticketBytes := make([]byte, 8)
+	for i, b := range ticketID {
+		ticketBytes[i] = b
+	}
+	response := append(ticketBytes, byte(statusCode))
+	fmt.Printf("PutterNode: Created %d-byte response using:\n", len(response))
+	fmt.Printf("\t%d bytes for TicketID\n", len(ticketID))
+	fmt.Printf("\t%d bytes for StatusCode\n", len([]byte{byte(statusCode)}))
+	return sendTCPSimple(
+		fmt.Sprintf("%s:%s", host, port),
+		response,
+	)
 }

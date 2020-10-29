@@ -1,4 +1,6 @@
-// Package dataputter Server, or PutterNode, is responsible for writing
+// Server
+//
+// A Server, or PutterNode, is responsible for writing
 // the data from WriteTickets to disk
 package dataputter
 

@@ -77,3 +77,23 @@ go run main.go loopback
 ```
 
 
+# Developing
+
+ETCD is a terrific collection of ideas in computer science and excellent documentation. However, the initial setup of the library and working with the Go SDK is terrible and poorly explained/documented.
+
+## Getting Started : Linux/Windows
+
+```
+set GO11MODULE=on
+# create go.mod
+go mod init
+# install v3 of the etcd client
+go get -u go.etcd.io/etcd/client@release-3.4
+```
+
+## ETCD Container
+
+Bring up with no auth in development mode listening on `2379`.
+```
+docker run -it --rm --name putter-etcd -e ALLOW_NONE_AUTHENTICATION=yes bitnami/etcd
+```

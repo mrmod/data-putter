@@ -1,4 +1,3 @@
-// Package dataputter Utilities
 package dataputter
 
 import (

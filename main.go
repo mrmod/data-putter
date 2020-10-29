@@ -37,6 +37,17 @@ func main() {
 			for putterRequest := range work {
 				if err := putterRequest.Write(); err != nil {
 					fmt.Printf("Error writing ticket %s: %v\n", putterRequest, err)
+				} else {
+					// Simulation is assumed to run on the same host
+					routerNodeAddress := "127.0.0.1:5002"
+					fmt.Printf("Preparing response to Ticket %s\n",
+						string(putterRequest.GetTicketID()),
+					)
+					dataputter.SendPutResponse(
+						routerNodeAddress,
+						putterRequest.GetTicketID(),
+						dataputter.TicketSaved,
+					)
 				}
 			}
 		}(intake)
@@ -48,6 +59,18 @@ func main() {
 					string(response.TicketID),
 					response.Status,
 				)
+				if err := dataputter.SetTicketStatus(
+					string(response.TicketID),
+					dataputter.TicketStatus[response.Status],
+				); err != nil {
+					fmt.Printf("Failed to move Ticket %s to status %d: %v\n",
+						string(response.TicketID),
+						response.Status,
+						err,
+					)
+				} else {
+					fmt.Printf("Marked Ticket %s as %s\n", string(response.TicketID), dataputter.TicketStatus[response.Status])
+				}
 			}
 		}(putterResponses)
 		// Listen for inbound files

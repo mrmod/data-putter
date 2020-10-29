@@ -1,4 +1,9 @@
-// Package dataputter Clients send bytes and a ticket
+// DataPutter is a very simplistic object store for people with private, properly configured,
+// networks.
+//
+// Client
+//
+// Clients  or DataPutterClient send bytes and a ticket
 // to a DataPutter (server) node to have things written to disk
 package dataputter
 
