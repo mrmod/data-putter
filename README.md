@@ -89,6 +89,26 @@ Bring up with no auth in development mode listening on `6379`.
 docker run -it --rm --name putter-redis -p 6379:6379 redis
 ```
 
+# Building
+
+To build for a release the OS-appropriate `build-docker` script will take care of your needs creating an image named `data-putter`.
+
+You may run the result in router mode with `run-in-docker` for your OS. Keep in mind, Redis may not be on the same network.
+
+See Integration of Redis and DataPutterRouter in Testing to see how networking might be setup.
+
+# Testing
+
+## Integration of Redis and DataPutterRouter
+
+This will allow clients to send data to the DataPutterRouter from the host networks and for the DataPutterRouter to contact a Redis instance.
+
+```
+docker network create dataputterNet
+docker run -it --rm --name putter-redis -p 6379:6379 --net dataputterNet redis
+docker run -it --rm --name putter-router -e REDIS_HOSTPORT=putter-redis:6379 -p 5001:5001 -p 5002:5002 --net dataputterNet data-putter router
+```
+
 ## Simulation : Accepting Writes
 
 The system can be started as a single node object store with

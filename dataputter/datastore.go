@@ -28,6 +28,7 @@ package dataputter
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -75,6 +76,10 @@ const (
 )
 
 func init() {
+	redisHostport := os.Getenv("REDIS_HOSTPORT")
+	if len(redisHostport) > 0 {
+		endpoints[0] = redisHostport
+	}
 	c, err := redis.NewPool("tcp", endpoints[0], 10)
 	if err != nil {
 		fmt.Printf("Unable to establish Redis connection: %v\n", err)
