@@ -63,12 +63,8 @@ func SendPutResponse(hostPort string, ticketID []byte, statusCode int) error {
 	default:
 		return fmt.Errorf("Need a host:port to send responses to")
 	}
-	// Pad bytes into 8-byte packet
-	ticketBytes := make([]byte, 8)
-	for i, b := range ticketID {
-		ticketBytes[i] = b
-	}
-	response := append(ticketBytes, byte(statusCode))
+
+	response := append(ticketID, byte(statusCode))
 	fmt.Printf("PutterNode: Created %d-byte response using:\n", len(response))
 	fmt.Printf("\t%d bytes for TicketID\n", len(ticketID))
 	fmt.Printf("\t%d bytes for StatusCode\n", len([]byte{byte(statusCode)}))

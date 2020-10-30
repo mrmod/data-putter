@@ -27,17 +27,16 @@
 package dataputter
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"time"
 
-	clientv3 "go.etcd.io/etcd/clientv3"
+	redis "github.com/mediocregopher/radix/v3"
 )
 
 var (
-	client    *clientv3.Client
-	endpoints = []string{"localhost:2379"}
+	client    *redis.Pool
+	endpoints = []string{"localhost:6379"}
 
 	// String form of status code int
 	TicketStatus = map[int]string{
@@ -64,27 +63,129 @@ const (
 	TicketError
 )
 const (
+	ObjectNew = iota
+	ObjectSaved
+	ObjectError
+	ObjectWriting
+)
+
+const (
 	// When there is no such status name
 	InvalidTicketStatus = -1
-
-	ObjectNew     = TicketNew
-	ObjectSaved   = TicketSaved
-	ObjectError   = TicketError
-	ObjectWriting = 3
 )
 
 func init() {
-	config := clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: 5 * time.Second,
-	}
-	c, err := clientv3.New(config)
+	c, err := redis.NewPool("tcp", endpoints[0], 10)
 	if err != nil {
-		fmt.Printf("Unable to establish ETCD connection: %v\n", err)
+		fmt.Printf("Unable to establish Redis connection: %v\n", err)
 		return
 	}
-	fmt.Println("Created ETCD client connection")
+	fmt.Println("Created Redis connection")
 	client = c
+}
+
+// Value is a string or string-ed []byte. Etcd assures us this is OK
+// http://localhost:4001/pkg/go.etcd.io/etcd/clientv3/#KV
+func writeString(keyPath, value string) error {
+	return client.Do(
+		redis.Cmd(nil, "SET", keyPath, value),
+	)
+}
+
+func getKey(keyPath string) (string, error) {
+	fmt.Printf("GetKey: %s ::%#v::\n", keyPath, keyPath)
+	var value string
+	err := client.Do(
+		redis.Cmd(&value, "GET", keyPath),
+	)
+	return value, err
+}
+
+func getCounter(keyPath string) (int64, error) {
+	var value int64
+	err := client.Do(
+		redis.Cmd(&value, "GET", keyPath),
+	)
+	return value, err
+}
+
+func initCounter(keyPath string) error {
+	return client.Do(redis.Cmd(nil, "SET", keyPath, "0"))
+}
+
+func touchCounter(keyPath string) (int64, error) {
+	var value int64
+
+	err := client.Do(
+		redis.Cmd(&value, "INCR", keyPath),
+	)
+	return value, err
+}
+
+// Touches a ticket counter. Each touch updates the Version of the key
+// https://groups.google.com/g/etcd-dev/c/8xVPAkUfWdM?pli=1
+func TouchTicketCounter(objectID string) (string, error) {
+	// Each put will generate a new version of the key in etcd
+	// this is a good point to set an abstraction
+	keyPath := "/objects/" + objectID + "/ticketCounter"
+	_, err := touchCounter(keyPath)
+	return keyPath, err
+}
+
+// Touches a write counter. Each touch updates the Version of the key
+// https://groups.google.com/g/etcd-dev/c/8xVPAkUfWdM?pli=1
+func TouchWriteCounter(objectID string) (string, error) {
+	keyPath := "/objects/" + objectID + "/writeCounter"
+	_, err := touchCounter(keyPath)
+	return keyPath, err
+}
+
+// Emitted to observers of a WatchCounter
+type CounterEvent struct {
+	// KeyPath of the counter
+	KeyPath string
+	// Value of the counter
+	Value int64
+}
+
+// Watches a key for Version updates
+func WatchCounter(keyPath string, observers chan CounterEvent) error {
+	fmt.Printf("WatchCounter starting for %s\n", keyPath)
+	var lastValue int64
+	if v, err := getCounter(keyPath); err != nil {
+		fmt.Printf("Unable to get counter %s\n", keyPath)
+		return err
+	} else {
+		lastValue = v
+	}
+
+	// 200 Hz
+	for range time.Tick(time.Millisecond * 5) {
+		v, err := getCounter(keyPath)
+		if err == nil {
+			if v != lastValue {
+				observers <- CounterEvent{
+					keyPath,
+					v,
+				}
+			}
+			lastValue = v
+		}
+	}
+
+	return nil
+}
+
+func GetTicketCounterValue(objectID string) (int64, error) {
+	return getCounter("/objects/" + objectID + "/ticketCounter")
+}
+
+func GetWriteCounterValue(objectID string) (int64, error) {
+	return getCounter("/objects/" + objectID + "/writeCounter")
+}
+
+func GetTicketObject(ticketID string) (string, error) {
+	return getKey("/tickets/" + ticketID + "/object")
 }
 
 // Get the ticket status code by name
@@ -97,36 +198,12 @@ func GetTicketStatusCode(statusName string) int {
 	return InvalidTicketStatus
 }
 
-// Value is a string or string-ed []byte. Etcd assures us this is OK
-// http://localhost:4001/pkg/go.etcd.io/etcd/clientv3/#KV
-func writeString(keyPath, value string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	_, err := client.KV.Put(ctx, keyPath, value)
-
-	if err != nil {
-		fmt.Printf("Error putting key %s with val %s: %v\n", keyPath, value, err)
-		return err
-	}
-
-	written, err := client.KV.Get(ctx, keyPath)
-	if err != nil {
-		fmt.Printf("Unable to verify %s\n", keyPath)
-		return err
-	} else {
-		fmt.Printf("Stored %s (%s requested) at keyPath %s\n", written.Kvs[0].Value, value, keyPath)
-	}
-
-	return nil
-}
-
 // Create a new object reference
 func CreateObject(objectID, ticketID string) error {
 	var err error
 	basePath := "/objects/" + objectID + "/"
 
-	err = writeString(basePath+ticketID, ticketID)
+	err = writeString(basePath+"tickets/"+ticketID, ticketID)
 	if err != nil {
 		return err
 	}
@@ -146,8 +223,10 @@ func SetObjectStatus(objectID, status string) error {
 // Sets a new ticket status
 func SetTicketStatus(ticketID, status string) error {
 	fmt.Printf("SetTicketStatus of %s to %s\n", ticketID, status)
+	keyPath := "/tickets/" + ticketID + "/status"
+
 	return writeString(
-		"/tickets/"+ticketID+"/status",
+		keyPath,
 		status,
 	)
 }
@@ -155,7 +234,7 @@ func SetTicketStatus(ticketID, status string) error {
 // Create a new ticket
 func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCount int64) error {
 	var err error
-
+	fmt.Printf("[%d:%d] CreateTicket %s for object %s\n", byteStart, byteEnd, ticketID, objectID)
 	basePath := "/tickets/" + ticketID + "/"
 	err = writeString(basePath+"ticket", ticketID)
 	if err != nil {
@@ -183,10 +262,11 @@ func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCou
 		return err
 	}
 
-	err = writeString(basePath+"status", TicketStatus[TicketNew])
-	if err != nil {
-		return err
-	}
+	// SetTicketStatus(ticketID, TicketStatus[TicketNew])
 
 	return err
+}
+
+func GetTicketStatus(ticketID string) (string, error) {
+	return getKey("/tickets/" + ticketID + "/status")
 }

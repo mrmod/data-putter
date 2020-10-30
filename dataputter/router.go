@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 )
 
 // PutterRequest : Serializable request transmissible to any
@@ -95,6 +96,33 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 			putterResponse.Status,
 		)
 
+		waitForObjectID := make(chan string, 1)
+
+		spinOnObjectCreation := func(tid string, waiter chan string) {
+			defer close(waitForObjectID)
+			// A watcher might be more elegant
+			for {
+				objectID, err := GetTicketObject(tid)
+				if err != nil {
+					fmt.Printf("Unable to find objectID for ticket %s: %v\n", tid, err)
+				} else {
+					// Ignore the keypath
+					_, err = TouchWriteCounter(objectID)
+					if err != nil {
+						fmt.Printf("\tFailed to update write counter on %s\n", objectID)
+					} else {
+						fmt.Printf("\tUpdated writeCounter of %s because of %s\n", objectID, tid)
+					}
+					waiter <- objectID
+					break
+				}
+			}
+		}
+
+		go spinOnObjectCreation(string(putterResponse.TicketID), waitForObjectID)
+
+		putterResponse.ObjectID = <-waitForObjectID
+		fmt.Printf("\tObject created %s\n", putterResponse.ObjectID)
 		putterResponses <- putterResponse
 		return nil
 	}
@@ -118,6 +146,12 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	var byteCount = int64(0)
 	var ticketID []byte
 
+	var writeInProgress sync.WaitGroup
+	writeInProgress.Add(1)
+
+	writeWaiters := make(chan CounterEvent, 2)
+
+	go spinWhileObjectWriting(string(objectID), writeWaiters, &writeInProgress)
 	// Write regions of bytes for this object
 	for {
 		ticketID = TicketGenerator(ticketID)
@@ -129,7 +163,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 
 		// How do we know when all tickets are saved?
 		if err == io.EOF {
-			return nil
+			break
 		}
 
 		putRequest := ObjectWriteTicket{
@@ -148,6 +182,27 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 			fmt.Printf("Unable to create Object %s: %v\n", putRequest.ObjectID, err)
 			return err
 		}
+
+		/*
+			How to know when the object has all been written?
+
+			One way is to count all the ticket creations and fork a watcher for each ETCD /tickets/$ticketID/status key.
+			When the status is saved, reduce the counter by 1. The counter might become zero more than once depending on
+			when in the for { connection } loop the counter is adjusted.
+
+			Another way is to maintain a counter in /objects/$objectID/ticketCounter and fork a watch for each
+			ETCD /tickets/$ticketID/status key. Additionally, etcd://objects/$objectID/writeCounter should be created.
+			Finally, a watcher should be setup on /writeCounter.
+			When a etcd://tickets/$ticketID/status key becomes saved, a counter at etcd://objects/$objectID/writeCounter
+			should be incremented.
+			When etcd://objects/$objectID/writeCounter matches the value in ./ticketCounter, the write is complete.
+
+			With the second way, there's a chance to do replication without making things complicated later. Any replicated object
+			is just an object so tacking on a etcd://objects/$objectID/replicatedFromObject or some such thing would
+			work fine.
+
+		*/
+
 		// Create a new ticket for each put request
 		if err := CreateTicket(
 			string(putRequest.WriteTicket.TicketID),
@@ -167,22 +222,58 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 		}
 		// Send putter request to writer
 		if n > 0 {
-			putterRequests <- putRequest
+			keyPath, err := TouchTicketCounter(string(objectID))
+
+			// TODO: Start ticketCounter writeCounter monitor exiting when both are equal
+			if err != nil {
+				fmt.Printf("Unable to update ticket counter at %s: %v\n", keyPath, err)
+				return err
+			}
+			// Create a ticket
 			if byteCount == int64(0) {
+				fmt.Printf("Setting object %s writing to 'Writing'\n", string(objectID))
 				if err := SetObjectStatus(putRequest.ObjectID, ObjectStatus[ObjectWriting]); err != nil {
 					fmt.Printf("Unable to move Object %s into writing status: %v\n", putRequest.ObjectID, err)
-				} else {
-					fmt.Printf("Set Object %s status to %s\n", putRequest.ObjectID, ObjectStatus[ObjectWriting])
+					return err
 				}
+				fmt.Printf("Set Object %s status to %s\n", putRequest.ObjectID, ObjectStatus[ObjectWriting])
 			}
 
 			byteCount += int64(n)
 			fmt.Printf("Read %d of %d bytes\n", n, byteCount)
-		}
-		if err != nil && err == io.EOF {
-			break
+			putterRequests <- putRequest
 		}
 	}
-
+	// At this point we have access to the length of the object in bytes
+	// Wait for the file to be written
+	fmt.Printf("Waiting for Object %s to be written\n", string(objectID))
+	go WatchCounter("/objects/"+string(objectID)+"/writeCounter", writeWaiters)
+	writeInProgress.Wait()
+	close(writeWaiters)
+	fmt.Printf("Wrote Object %s to enough nodes\n", string(objectID))
 	return nil
+}
+
+func spinWhileObjectWriting(objectID string, countEvents chan CounterEvent, wg *sync.WaitGroup) {
+
+	fmt.Printf("Wait on object write to complete")
+	for countEvent := range countEvents {
+		writeCounter, wcErr := GetWriteCounterValue(objectID)
+		ticketCounter, tcErr := GetTicketCounterValue(objectID)
+
+		if wcErr == nil && tcErr == nil {
+			fmt.Printf("Comparing T: %d with W %d vs CE %s :: %d\n",
+				ticketCounter,
+				writeCounter,
+				countEvent.KeyPath,
+				countEvent.Value,
+			)
+			if writeCounter == ticketCounter && ticketCounter > 0 {
+				wg.Done()
+				return
+			}
+		} else {
+			fmt.Printf("Counter event errors; %v and %v\n", wcErr, tcErr)
+		}
+	}
 }

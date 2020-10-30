@@ -58,7 +58,7 @@ go run main.go
 go run main.go router
 ```
 
-Files will be rooted in the path you are in and list on `tcp/5001` for TCP byte-streams which look like `WriteTicket`s.
+Files will be rooted in the path, writing to `./data`, you are in and list on `tcp/5001` for TCP byte-streams which look like `WriteTicket`s.
 
 ## Running : Putter Node
 
@@ -76,24 +76,53 @@ Sends data to `127.0.0.1:5000` and requires the Putter Node server to be running
 go run main.go loopback
 ```
 
-
 # Developing
 
-ETCD is a terrific collection of ideas in computer science and excellent documentation. However, the initial setup of the library and working with the Go SDK is terrible and poorly explained/documented.
+ETCD ended up being a very poor developer experience due to scattered documentation, poor SEO, and unexpected serialization of inputs.
 
-## Getting Started : Linux/Windows
+Redis has taken over.
+
+## Redis Container
+
+Bring up with no auth in development mode listening on `6379`.
+```
+docker run -it --rm --name putter-redis -p 6379:6379 redis
+```
+
+## Simulation : Accepting Writes
+
+The system can be started as a single node object store with
 
 ```
-set GO11MODULE=on
-# create go.mod
-go mod init
-# install v3 of the etcd client
-go get -u go.etcd.io/etcd/client@release-3.4
+go run main.go router
 ```
 
-## ETCD Container
+This will start Router and encapsulate a PutterRequest and PutterResponse handler. This operates conceptually as:
 
-Bring up with no auth in development mode listening on `2379`.
 ```
-docker run -it --rm --name putter-etcd -e ALLOW_NONE_AUTHENTICATION=yes bitnami/etcd
+# Router tcp/5001
+while 1 == 1 {
+    onConnection {
+
+        createObjectID
+
+        for packet in connectionPackets {
+
+            UpdateObjectTicketCount()
+            sendWriteRequest() -> PutterRequestHandler()
+            
+            if EOF { break }
+        }
+        waitOnAllWrites
+        
+        OBJECT WRITTEN OK
+    }
+}
+
+# PutterRequestHandler(PutterRequest)
+WriteData() -> SendPutterResponse()
+
+# PutterResponseHandler(PutterResponse) tcp/5002
+MarkTicketComplete()
+UpdateObjectTicketWriteCount()
 ```

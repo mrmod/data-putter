@@ -52,13 +52,10 @@ func main() {
 			}
 		}(intake)
 
-		// ResponseHandler
+		// ResponseHandler for PutRequests(WriteTicket) sent to DataPutter nodes
 		go func(responses chan dataputter.PutterResponse) {
 			for response := range responses {
-				fmt.Printf("Ticket %s Status %d\n",
-					string(response.TicketID),
-					response.Status,
-				)
+				fmt.Printf("Ticket %s PutterResponse status: %d\n", string(response.TicketID), response.Status)
 				if err := dataputter.SetTicketStatus(
 					string(response.TicketID),
 					dataputter.TicketStatus[response.Status],
@@ -68,8 +65,7 @@ func main() {
 						response.Status,
 						err,
 					)
-				} else {
-					fmt.Printf("Marked Ticket %s as %s\n", string(response.TicketID), dataputter.TicketStatus[response.Status])
+					continue
 				}
 			}
 		}(putterResponses)
