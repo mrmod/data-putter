@@ -16,6 +16,26 @@ Simple Object Store consists of a DataPutter, DataReceiver, and Datastore.
 * Each chunk is sent to a **DataPutter** to store
 * When all chunks are stored, the file has been "Received"
 
+### Roles and Ports
+
+```
+# RunsOn: Router
+# Handles requests to store bytes of an object
+Router: 5001
+
+# RunsOn: Router
+# Handles responses to ticket write requests
+Router: 5002
+
+# RunsOn: Router
+# Handles requests to retrieve bytes of an object
+ObjectRequestServer: 5004
+
+# RunsOn: PutterNode
+# Handle responses to ticket read requests
+TicketRequestServer: 5005
+```
+
 ### Data Putter : Writing Bytes
 
 DataPutter receives requests of the structure:
@@ -49,7 +69,7 @@ Bytes are written to the path corresponding to ordered length-2 strings from the
 
 ```
 # Startup and shutdown
-go run main.go
+go run main.go singleNode
 ```
 
 ## Running : Router Node

@@ -6,6 +6,7 @@ package dataputter
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"strings"
@@ -72,4 +73,32 @@ func SendPutResponse(hostPort string, ticketID []byte, statusCode int) error {
 		fmt.Sprintf("%s:%s", host, port),
 		response,
 	)
+}
+
+func ServeTicketBytes(c net.Conn) error {
+	defer c.Close()
+
+	ticketIDBytes := make([]byte, 8)
+
+	if l, err := c.Read(ticketIDBytes); err != nil || l != 8 {
+		fmt.Printf("Failed to get ticketID from %d bytes: %v\n", l, err)
+		return err
+	}
+
+	ticketID := string(ticketIDBytes)
+	fmt.Printf("Serving ticket %s\n", ticketID)
+
+	filename := ObjectPathString(string(ticketID)) + "/obj"
+
+	ticketBytes, err := ioutil.ReadFile(filename)
+
+	if err != nil {
+		return err
+	}
+	n, err := c.Write(ticketBytes)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\tServed %d bytes for ticket %s\n", n, ticketID)
+	return nil
 }

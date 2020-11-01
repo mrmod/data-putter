@@ -26,7 +26,7 @@ func main() {
 
 	switch startupMode {
 	// Byte Putter Router server
-	case "router":
+	case "router", "singleNode", "standAlone":
 		intake := make(chan dataputter.PutterRequest, 4)
 		putterResponses := make(chan dataputter.PutterResponse, 4)
 		defer close(intake)
@@ -69,10 +69,16 @@ func main() {
 				}
 			}
 		}(putterResponses)
-		// Listen for inbound files
+
+		// Listen for inbound files [Router]
 		go dataputter.RouterServer(5001, intake)
-		// Listen for Putter write responses (block)
-		dataputter.PutterResponseServer(5002, putterResponses)
+		// Listen for Putter write responses (block) [Router]
+		go dataputter.PutterResponseServer(5002, putterResponses)
+
+		// Listen for Object read requests [Router]
+		go dataputter.ObjectRequestServer(5004)
+		// Listen for Ticket read requests [PutterNode]
+		dataputter.TicketRequestServer(5005)
 
 	// Byte Putter server
 	case "putter":

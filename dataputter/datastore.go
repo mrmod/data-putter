@@ -213,8 +213,21 @@ func CreateObject(objectID, ticketID string) error {
 		return err
 	}
 
+	err = client.Do(redis.Cmd(nil, "SADD", "objects", objectID))
+	if err != nil {
+		fmt.Printf("Unable to add %s to set of objects: %v", objectID, err)
+	}
+
 	err = writeString(basePath+"status", TicketStatus[TicketNew])
 	return err
+}
+
+// Set the size of an object
+func SetObjectByteSize(objectID string, sizeInBytes int64) error {
+	return writeString(
+		"/objects/"+objectID+"/size",
+		fmt.Sprintf("%d", sizeInBytes),
+	)
 }
 
 // Sets a new Object status
@@ -236,6 +249,26 @@ func SetTicketStatus(ticketID, status string) error {
 	)
 }
 
+// Get a list of tickets for in the inclusive range from offset to minByt + 512KB
+func GetTicketsFromOffset(objectID string, offset int64) (tickets []string, err error) {
+	fmt.Printf("GetTicketFromOffset %d %s\n", offset, objectID)
+	err = client.Do(
+		redis.Cmd(
+			&tickets,
+			"ZRANGEBYSCORE",
+			"objectBytes/"+objectID,
+			strconv.FormatInt(offset, 10),
+			strconv.FormatInt(offset+int64(1024*512), 10),
+		),
+	)
+
+	if err != nil {
+		return
+	}
+
+	return
+}
+
 // Create a new ticket
 func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCount int64) error {
 	var err error
@@ -254,6 +287,14 @@ func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCou
 		return err
 	}
 
+	// Keep tickets sorted for an object by storing the start byte as the score of a ticket
+	err = client.Do(
+		redis.Cmd(nil, "ZADD", "objectBytes/"+objectID, strconv.FormatInt(byteStart, 10), ticketID),
+	)
+	if err != nil {
+		return err
+	}
+
 	err = writeString(basePath+"byteStart", strconv.FormatInt(byteStart, 10))
 	if err != nil {
 		return err
@@ -267,6 +308,18 @@ func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCou
 		return err
 	}
 
+	// Track which tickets an object has
+	err = client.Do(redis.Cmd(nil, "SADD", "objectTickets/"+objectID, ticketID))
+	if err != nil {
+		fmt.Printf("Unable to add %s to set of objects: %v", objectID, err)
+	}
+
+	// Track which nodes have tickets for an object
+	err = client.Do(redis.Cmd(nil, "SADD", "objectNodes/"+objectID, nodeID))
+	if err != nil {
+		fmt.Printf("Unable to add %s to set of objects: %v", objectID, err)
+	}
+
 	// SetTicketStatus(ticketID, TicketStatus[TicketNew])
 
 	return err
@@ -274,4 +327,26 @@ func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCou
 
 func GetTicketStatus(ticketID string) (string, error) {
 	return getKey("/tickets/" + ticketID + "/status")
+}
+
+func GetTicketNode(ticketID string) (string, error) {
+	return getKey("/tickets/" + ticketID + "/node")
+}
+
+func GetTicketSize(ticketID string) (int64, error) {
+	v, err := getKey("/tickets/" + ticketID + "/byteCount")
+
+	if err != nil {
+		return int64(0), err
+	}
+	return strconv.ParseInt(v, 10, 64)
+}
+
+func GetObjectSize(objectID string) (int64, error) {
+	v, err := getKey("/objects/" + objectID + "/size")
+
+	if err != nil {
+		return int64(0), err
+	}
+	return strconv.ParseInt(v, 10, 64)
 }

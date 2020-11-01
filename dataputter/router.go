@@ -140,7 +140,6 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	objectID = TicketGenerator(objectID)
 	fmt.Printf("Handling router connection as Object: %s\n", string(objectID))
 
-	dataStream := make([]byte, 1458)
 	var err error
 	var n int
 	var byteCount = int64(0)
@@ -154,6 +153,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	go spinWhileObjectWriting(string(objectID), writeWaiters, &writeInProgress)
 	// Write regions of bytes for this object
 	for {
+		dataStream := make([]byte, 1458)
 		ticketID = TicketGenerator(ticketID)
 		n, err = c.Read(dataStream)
 		if err != nil && err != io.EOF {
@@ -250,7 +250,8 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	go WatchCounter("/objects/"+string(objectID)+"/writeCounter", writeWaiters)
 	writeInProgress.Wait()
 	close(writeWaiters)
-	fmt.Printf("Wrote Object %s to enough nodes\n", string(objectID))
+	SetObjectByteSize(string(objectID), byteCount)
+	fmt.Printf("Persisted all %d bytes of Object %s\n", byteCount, string(objectID))
 	return nil
 }
 
