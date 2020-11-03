@@ -3,14 +3,15 @@
 // The router is responsible for listening for an entire
 // file of bytes from an object owner. It reads at least 1458 bytes into memory.
 //
-// Bytes are ready in 1458-byte chunks until a `nil` is encountered. Each time a
-// chunk is ready, it is assigned a ticket and a checksum is done on the bytes.
+// Bytes are ready in 1450-byte chunks preceded by an 8-byte content length int.
+// Each time a chunk is ready, it is assigned a ticket and a checksum (TODO) is done on the bytes.
 //
 // After the ticket, a WriteTicket and checksum are created, they are sent along with
 // their data bytes to a PutterNode so it can write them to disk somewhere.
 package dataputter
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -46,6 +47,7 @@ func RouterServer(port int, putterRequests chan PutterRequest) error {
 			fmt.Printf("Error in connection: %v\n", err)
 			continue
 		}
+		// Handle a request to store a file/bunch-of-bytes somewhere
 		go putterRequestHandler(conn, putterRequests)
 	}
 }
@@ -69,7 +71,10 @@ func PutterResponseServer(port int, putterResponses chan PutterResponse) error {
 }
 
 // putterRepsonseHandler : Handles responses sent from PutterNodes in response to
-// a PutRequest
+// a PutRequest.
+// When a WriteTicket request completes the response handler takes the
+// message it receives from the DataPutterNode and updates observers of
+// putterResponses
 func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) error {
 	defer c.Close()
 
@@ -90,7 +95,7 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 			NodeID:   c.RemoteAddr().String(),
 		}
 
-		fmt.Printf("Read response from Node %s for Ticket %s: %d\n",
+		fmt.Printf("PutterResponse from Node %s for Ticket %s: %d\n",
 			putterResponse.NodeID,
 			string(putterResponse.TicketID),
 			putterResponse.Status,
@@ -111,7 +116,7 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 					if err != nil {
 						fmt.Printf("\tFailed to update write counter on %s\n", objectID)
 					} else {
-						fmt.Printf("\tUpdated writeCounter of %s because of %s\n", objectID, tid)
+						fmt.Printf("\tUpdated Object writeCounter of %s because of ticket %s\n", objectID, tid)
 					}
 					waiter <- objectID
 					break
@@ -122,7 +127,7 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 		go spinOnObjectCreation(string(putterResponse.TicketID), waitForObjectID)
 
 		putterResponse.ObjectID = <-waitForObjectID
-		fmt.Printf("\tObject created %s\n", putterResponse.ObjectID)
+		fmt.Printf("\tObject %s exists\n", putterResponse.ObjectID)
 		putterResponses <- putterResponse
 		return nil
 	}
@@ -132,44 +137,62 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 var objectID []byte
 
 // putterRequestHandler : Handles a single TCP connection creating an
-// ObjectID for the file and then WriteTickets for each byte region
+// ObjectID for the file and then WriteTickets for each byte region.
+// When it has written all the bytes sent, it will reply with the 8 Byte
+// ObjectID it has assigned.
 func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	defer c.Close()
 
 	// Grant a new ObjectID for this TCP connection / file
 	objectID = TicketGenerator(objectID)
-	fmt.Printf("Handling router connection as Object: %s\n", string(objectID))
+	fmt.Printf("Handling router connection for Object: %s\n", string(objectID))
 
-	var err error
+	// [8B size][1450B data]
+	// Limits requests to 16 GB
+	// ContentLength must be bigEndian
+	contentLenBuf := make([]byte, 8)
+	if _, err := c.Read(contentLenBuf); err != nil {
+		fmt.Printf("Unable to get the content lenght of Object %s: %s\n", string(objectID), err)
+		return err
+	}
+	fmt.Printf("Read contentLen as %s\n", string(contentLenBuf))
+	// err := binary.Read(contentLenBuf, binary.BigEndian, &contentLength)
+	contentLength := int64(binary.BigEndian.Uint64(contentLenBuf))
+
+	fmt.Printf("Opening %d bytes of content from Object %s\n", contentLength, string(objectID))
 	var n int
-	var byteCount = int64(0)
+	var err error
+	var bytesRead = int64(0)
 	var ticketID []byte
 
 	var writeInProgress sync.WaitGroup
 	writeInProgress.Add(1)
 
+	// Consumers waiting on Object write to complete
 	writeWaiters := make(chan CounterEvent, 2)
 
-	go spinWhileObjectWriting(string(objectID), writeWaiters, &writeInProgress)
 	// Write regions of bytes for this object
 	for {
-		dataStream := make([]byte, 1458)
+		fmt.Printf("-- -- --\n")
+		dataStream := make([]byte, 1450)
 		ticketID = TicketGenerator(ticketID)
+		fmt.Printf("Trying to read bytes from Object %s stream\n", string(objectID))
 		n, err = c.Read(dataStream)
+		fmt.Printf("\tRead %d bytes from Object %s stream\n", n, string(objectID))
 		if err != nil && err != io.EOF {
-			fmt.Printf("Error reading bytes from %d onward: %v\n", byteCount, err)
+			fmt.Printf("Error reading bytes from %d onward: %v\n", bytesRead, err)
 			return err
 		}
 
-		// How do we know when all tickets are saved?
 		if err == io.EOF {
+			fmt.Printf("\tEOF Read %d bytes of object %s\n", bytesRead, string(objectID))
 			break
 		}
 
 		putRequest := ObjectWriteTicket{
 			ObjectID:  string(objectID),
-			ByteStart: byteCount,
-			ByteEnd:   byteCount + int64(n),
+			ByteStart: bytesRead,
+			ByteEnd:   bytesRead + int64(n),
 			ByteCount: int64(n),
 			WriteTicket: WriteTicket{
 				TicketID: ticketID,
@@ -201,6 +224,14 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 			is just an object so tacking on a etcd://objects/$objectID/replicatedFromObject or some such thing would
 			work fine.
 
+			There could be cases of premature completion. A remote client, putting bytes to DataPutterRouter, could
+			stall while uploading bytes. The byte counts are designed to occur at the packet boundary so the end of a
+			small MTU 1500 TCP packet would create a ticket, which would write, resulting in TicketCount == WriteCount.
+			However, there are more bytes to the object. This means we must avoid marking a write complete while the
+			connection is still open. Safety and simplicity have been chosen over performance using the `io.EOF` error
+			instead of a concurrent readers approach. The speed of bytes on the wire is less than their speed once
+			received so it seems a worthwhile trade-off.
+
 		*/
 
 		// Create a new ticket for each put request
@@ -230,7 +261,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 				return err
 			}
 			// Create a ticket
-			if byteCount == int64(0) {
+			if bytesRead == int64(0) {
 				fmt.Printf("Setting object %s writing to 'Writing'\n", string(objectID))
 				if err := SetObjectStatus(putRequest.ObjectID, ObjectStatus[ObjectWriting]); err != nil {
 					fmt.Printf("Unable to move Object %s into writing status: %v\n", putRequest.ObjectID, err)
@@ -239,20 +270,41 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 				fmt.Printf("Set Object %s status to %s\n", putRequest.ObjectID, ObjectStatus[ObjectWriting])
 			}
 
-			byteCount += int64(n)
-			fmt.Printf("Read %d of %d bytes\n", n, byteCount)
+			bytesRead += int64(n)
+			fmt.Printf("Read %d of %d bytes\n", n, contentLength)
 			putterRequests <- putRequest
+
+			if putRequest.ByteEnd == contentLength {
+				fmt.Printf("\tRead all %d bytes of %d for Object %s\n",
+					putRequest.ByteEnd,
+					contentLength,
+					string(objectID),
+				)
+				break
+			}
+		} else {
+			fmt.Printf("Unexpected 0 byte read\n")
 		}
 	}
 	// At this point we have access to the length of the object in bytes
 	// Wait for the file to be written
 	fmt.Printf("Waiting for Object %s to be written\n", string(objectID))
+	go spinWhileObjectWriting(string(objectID), writeWaiters, &writeInProgress)
 	go WatchCounter("/objects/"+string(objectID)+"/writeCounter", writeWaiters)
+	fmt.Printf("Waiting for WatchCounter to release inProgress for %s\n", string(objectID))
 	writeInProgress.Wait()
-	close(writeWaiters)
-	SetObjectByteSize(string(objectID), byteCount)
-	fmt.Printf("Persisted all %d bytes of Object %s\n", byteCount, string(objectID))
-	return nil
+	// close(writeWaiters)
+	SetObjectByteSize(string(objectID), bytesRead)
+	fmt.Printf("Persisted all %d bytes of Object %s\n", bytesRead, string(objectID))
+	// Send the created objectID to the client
+	n, err = c.Write(objectID)
+	if err != nil {
+		fmt.Printf("Failed to notify client [%d]objectID %s was committed successfully\n", n, objectID)
+		return err
+	}
+	fmt.Printf("OK %d byte of [%d]objectID %s write committed\n", bytesRead, n, objectID)
+
+	return c.Close()
 }
 
 func spinWhileObjectWriting(objectID string, countEvents chan CounterEvent, wg *sync.WaitGroup) {

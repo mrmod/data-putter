@@ -65,20 +65,23 @@ func main() {
 						response.Status,
 						err,
 					)
-					continue
+				} else {
+					fmt.Printf("\tCommitted Ticket %s status %s to datatore\n",
+						string(response.TicketID),
+						dataputter.TicketStatus[response.Status],
+					)
 				}
 			}
 		}(putterResponses)
 
-		// Listen for inbound files [Router]
-		go dataputter.RouterServer(5001, intake)
 		// Listen for Putter write responses (block) [Router]
 		go dataputter.PutterResponseServer(5002, putterResponses)
-
 		// Listen for Object read requests [Router]
 		go dataputter.ObjectRequestServer(5004)
 		// Listen for Ticket read requests [PutterNode]
-		dataputter.TicketRequestServer(5005)
+		go dataputter.TicketRequestServer(5005)
+		// Listen for inbound files [Router]
+		dataputter.RouterServer(5001, intake)
 
 	// Byte Putter server
 	case "putter":

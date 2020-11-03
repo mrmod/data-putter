@@ -3,16 +3,18 @@
 Stores bytes on disks.
 
 ```
-Client -> [8B TicketID | 8B Checksum | 1458B Data] -> Server
+Client -> [8B ContentLength | 1450B Data] -> Router
+
+Router -> [8B TicketID | 8B Checksum | 1450B Data] -> PutterNode
 
 Server -> WriteDataToDisk() -> [8B TicketID | 1B Status] -> Client
 ```
 
 ## Overview
 
-Simple Object Store consists of a DataPutter, DataReceiver, and Datastore.
+Simple Object Store consists of a DataPutter, Router, and Datastore.
 
-* A File is sent to **DataReceiver** who turns it into 1458-byte chunks.
+* A File is sent to **Router** who turns it into 1450-byte chunks.
 * Each chunk is sent to a **DataPutter** to store
 * When all chunks are stored, the file has been "Received"
 
@@ -25,7 +27,7 @@ Router: 5001
 
 # RunsOn: Router
 # Handles responses to ticket write requests
-Router: 5002
+TicketResponseServer: 5002
 
 # RunsOn: Router
 # Handles requests to retrieve bytes of an object
@@ -42,7 +44,7 @@ DataPutter receives requests of the structure:
 
 ```
 ---------------- ---------------- ----~----
-| 8B            | 8B             | 1458B   |
+| 8B            | 8B             | 1450B   |
 | TicketID      |Checksum        |Data     |
 ---------------- ---------------- ---------
 ```
@@ -63,7 +65,7 @@ An opaque collection of bytes aligned to the default `1500 byte` MTU - `40 Bytes
 
 ### Data Putter : Placing Bytes
 
-Bytes are written to the path corresponding to ordered length-2 strings from the `TicketID`. For example, the TicketID `AABBCCDD` will become the filepath `/AA/BB/CC/DD/obj`.
+Bytes are written to the path corresponding to ordered length-2 strings from the `TicketID`. For example, the TicketID `AABBCCDD` will become the filepath `/A/A/B/B/C/C/D/D/obj`.
 
 # Running
 
