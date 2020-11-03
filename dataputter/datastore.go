@@ -156,25 +156,22 @@ type CounterEvent struct {
 // Watches a key for Version updates
 func WatchCounter(keyPath string, observers chan CounterEvent) error {
 	fmt.Printf("WatchCounter starting for %s\n", keyPath)
-	var lastValue int64
+
 	if v, err := getCounter(keyPath); err != nil {
 		fmt.Printf("Unable to get counter %s\n", keyPath)
 		return err
 	} else {
-		lastValue = v
+		observers <- CounterEvent{keyPath, v}
 	}
 
 	// 200 Hz
 	for range time.Tick(time.Millisecond * 5) {
 		v, err := getCounter(keyPath)
 		if err == nil {
-			if v != lastValue {
-				observers <- CounterEvent{
-					keyPath,
-					v,
-				}
+			observers <- CounterEvent{
+				keyPath,
+				v,
 			}
-			lastValue = v
 		}
 	}
 
