@@ -127,6 +127,10 @@ func touchCounter(keyPath string) (int64, error) {
 	return value, err
 }
 
+func deleteKeyPath(keyPath string) error {
+	return client.Do(redis.Cmd(nil, "DEL", keyPath))
+}
+
 // Touches a ticket counter. Each touch updates the Version of the key
 // https://groups.google.com/g/etcd-dev/c/8xVPAkUfWdM?pli=1
 func TouchTicketCounter(objectID string) (string, error) {

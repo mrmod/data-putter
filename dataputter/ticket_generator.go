@@ -1,18 +1,38 @@
 package dataputter
 
-import "strconv"
+import (
+	"fmt"
+)
 
-// TicketGenerator Generates tickets from "0" to "Z" as byte string
-func TicketGenerator(lastTicket []byte) []byte {
-	// Base16 to Base10 as int64
-	n, _ := strconv.ParseInt(string(lastTicket), 16, 64)
+const (
+	objectIDCounterKey = "objectIDCounter"
+	ticketIDCounterKey = "ticketIDCounter"
+)
 
-	nextN := n + int64(1)
-	// Create a hex representation
-	nextTicket := []byte(strconv.FormatInt(nextN, 16))
-
-	for len(nextTicket) < 8 {
-		nextTicket = append([]byte("0"), nextTicket...)
+// Unique ticketID generation
+func NextTicketID() []byte {
+	v, err := touchCounter(ticketIDCounterKey)
+	if err != nil {
+		fmt.Printf("Unable to get objectID from %s: %v\n",
+			objectIDCounterKey, err,
+		)
+		return []byte{}
 	}
-	return nextTicket
+	ticketID := fmt.Sprintf("%08d", v)
+
+	return []byte(ticketID)
+}
+
+// Unique objectID generation
+func NextObjectID() []byte {
+	v, err := touchCounter(objectIDCounterKey)
+	if err != nil {
+		fmt.Printf("Unable to get objectID from %s: %v\n",
+			objectIDCounterKey, err,
+		)
+		return []byte{}
+	}
+	objectID := fmt.Sprintf("%07d", v)
+
+	return []byte(objectID)
 }

@@ -134,8 +134,6 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 	return nil
 }
 
-var objectID []byte
-
 // putterRequestHandler : Handles a single TCP connection creating an
 // ObjectID for the file and then WriteTickets for each byte region.
 // When it has written all the bytes sent, it will reply with the 8 Byte
@@ -144,7 +142,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	defer c.Close()
 
 	// Grant a new ObjectID for this TCP connection / file
-	objectID = TicketGenerator(objectID)
+	objectID := NextObjectID()
 	fmt.Printf("Handling router connection for Object: %s\n", string(objectID))
 
 	// [8B size][1450B data]
@@ -163,7 +161,6 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	var n int
 	var err error
 	var bytesRead = int64(0)
-	var ticketID []byte
 
 	var writeInProgress sync.WaitGroup
 	writeInProgress.Add(1)
@@ -175,7 +172,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	for {
 		fmt.Printf("-- -- --\n")
 		dataStream := make([]byte, 1450)
-		ticketID = TicketGenerator(ticketID)
+		ticketID := NextTicketID()
 		fmt.Printf("Trying to read bytes from Object %s stream\n", string(objectID))
 		n, err = c.Read(dataStream)
 		fmt.Printf("\tRead %d bytes from Object %s stream\n", n, string(objectID))
@@ -205,34 +202,6 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 			fmt.Printf("Unable to create Object %s: %v\n", putRequest.ObjectID, err)
 			return err
 		}
-
-		/*
-			How to know when the object has all been written?
-
-			One way is to count all the ticket creations and fork a watcher for each ETCD /tickets/$ticketID/status key.
-			When the status is saved, reduce the counter by 1. The counter might become zero more than once depending on
-			when in the for { connection } loop the counter is adjusted.
-
-			Another way is to maintain a counter in /objects/$objectID/ticketCounter and fork a watch for each
-			ETCD /tickets/$ticketID/status key. Additionally, etcd://objects/$objectID/writeCounter should be created.
-			Finally, a watcher should be setup on /writeCounter.
-			When a etcd://tickets/$ticketID/status key becomes saved, a counter at etcd://objects/$objectID/writeCounter
-			should be incremented.
-			When etcd://objects/$objectID/writeCounter matches the value in ./ticketCounter, the write is complete.
-
-			With the second way, there's a chance to do replication without making things complicated later. Any replicated object
-			is just an object so tacking on a etcd://objects/$objectID/replicatedFromObject or some such thing would
-			work fine.
-
-			There could be cases of premature completion. A remote client, putting bytes to DataPutterRouter, could
-			stall while uploading bytes. The byte counts are designed to occur at the packet boundary so the end of a
-			small MTU 1500 TCP packet would create a ticket, which would write, resulting in TicketCount == WriteCount.
-			However, there are more bytes to the object. This means we must avoid marking a write complete while the
-			connection is still open. Safety and simplicity have been chosen over performance using the `io.EOF` error
-			instead of a concurrent readers approach. The speed of bytes on the wire is less than their speed once
-			received so it seems a worthwhile trade-off.
-
-		*/
 
 		// Create a new ticket for each put request
 		if err := CreateTicket(
