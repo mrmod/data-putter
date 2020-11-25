@@ -32,7 +32,7 @@ func NextObjectID() []byte {
 		)
 		return []byte{}
 	}
-	objectID := fmt.Sprintf("%07d", v)
+	objectID := fmt.Sprintf("%08d", v)
 
 	return []byte(objectID)
 }

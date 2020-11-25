@@ -52,6 +52,7 @@ func main() {
 			}
 		}(intake)
 
+		// Listen for PutRequest responses from the Simulated DataPutter node
 		// ResponseHandler for PutRequests(WriteTicket) sent to DataPutter nodes
 		go func(responses chan dataputter.PutterResponse) {
 			for response := range responses {
@@ -83,11 +84,14 @@ func main() {
 		// Listen for inbound files [Router]
 		dataputter.RouterServer(5001, intake)
 
-	// Byte Putter server
+	// DataPutter Node
 	case "putter":
 		intake := make(chan dataputter.WriteTicket, 4)
 		defer close(intake)
 
+		// Handles writing ticket bytes to disk
+		// When used seriously, this handler is running
+		// on every node writing ticket bytes to its disks
 		go dataputter.WriteTicketHandler(intake)
 
 		if err := dataputter.CreateServer(":5000", intake); err != nil {

@@ -36,3 +36,19 @@ func TestSetTicketStatusInSequence(t *testing.T) {
 		}
 	}
 }
+
+func TestGetObjectTickets(t *testing.T) {
+	defer DeleteTicket("TEST_OBJECT_ID", "TEST_TICKET_ID")
+	err := CreateTicket("TEST_TICKET_ID", "TEST_OBJECT_ID", "TEST_NODE_ID", 0, 10, 10)
+	if err != nil {
+		t.Errorf("Expected to write one ticket, got %v\n", err)
+	}
+
+	tickets, err := GetObjectTickets("TEST_OBJECT_ID")
+	if err != nil {
+		t.Errorf("Expected tickets for 'TEST_OBJECT_ID', got %v\n", err)
+	}
+	if len(tickets) != 1 {
+		t.Errorf("Expected 1 ticket, got %d\n", len(tickets))
+	}
+}

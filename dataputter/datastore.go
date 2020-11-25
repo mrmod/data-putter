@@ -149,6 +149,15 @@ func TouchWriteCounter(objectID string) (string, error) {
 	return keyPath, err
 }
 
+// Reduces the ticket counter by 1
+func ReduceTicketCounter(objectID string) (int64, error) {
+	var value int64
+	keyPath := "/objects/" + objectID + "/ticketCounter"
+	return value, client.Do(
+		redis.Cmd(&value, "DECR", keyPath),
+	)
+}
+
 // Emitted to observers of a WatchCounter
 type CounterEvent struct {
 	// KeyPath of the counter
@@ -270,20 +279,39 @@ func GetTicketsFromOffset(objectID string, offset int64) (tickets []string, err 
 	return
 }
 
-// Create a new ticket
+// Create a new ticket in the datastore
 func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCount int64) error {
 	var err error
 	fmt.Printf("[%d:%d] CreateTicket %s for object %s\n", byteStart, byteEnd, ticketID, objectID)
 	basePath := "/tickets/" + ticketID + "/"
+
+	// /tickets/$TICKET_ID/ticket = TICKET_ID
 	err = writeString(basePath+"ticket", ticketID)
 	if err != nil {
 		return err
 	}
+	// /tickets/$TICKET_ID/object = OBJECT_ID
 	err = writeString(basePath+"object", objectID)
 	if err != nil {
 		return err
 	}
+	// /tickets/$TICKET_ID/node = NODE_ID
 	err = writeString(basePath+"node", nodeID)
+	if err != nil {
+		return err
+	}
+	// /tickets/$TICKET_ID/byteStart = 0
+	err = writeString(basePath+"byteStart", strconv.FormatInt(byteStart, 10))
+	if err != nil {
+		return err
+	}
+	// /tickets/$TICKET_ID/byteEnd = 1450
+	err = writeString(basePath+"byteEnd", strconv.FormatInt(byteEnd, 10))
+	if err != nil {
+		return err
+	}
+	// /tickets/$TICKET_ID/byteCount = 1450
+	err = writeString(basePath+"byteCount", strconv.FormatInt(byteCount, 10))
 	if err != nil {
 		return err
 	}
@@ -292,19 +320,6 @@ func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCou
 	err = client.Do(
 		redis.Cmd(nil, "ZADD", "objectBytes/"+objectID, strconv.FormatInt(byteStart, 10), ticketID),
 	)
-	if err != nil {
-		return err
-	}
-
-	err = writeString(basePath+"byteStart", strconv.FormatInt(byteStart, 10))
-	if err != nil {
-		return err
-	}
-	err = writeString(basePath+"byteEnd", strconv.FormatInt(byteEnd, 10))
-	if err != nil {
-		return err
-	}
-	err = writeString(basePath+"byteCount", strconv.FormatInt(byteCount, 10))
 	if err != nil {
 		return err
 	}
@@ -341,6 +356,80 @@ func GetTicketSize(ticketID string) (int64, error) {
 		return int64(0), err
 	}
 	return strconv.ParseInt(v, 10, 64)
+}
+
+func GetObjectTickets(objectID string) ([]string, error) {
+	tickets := []string{}
+
+	err := client.Do(
+		redis.Cmd(&tickets, "smembers", "objectTickets/"+objectID),
+	)
+
+	return tickets, err
+}
+
+func DeleteTicket(objectID, ticketID string) error {
+	status, err := GetTicketStatus(ticketID)
+	if err != nil {
+		return err
+	}
+	if status != "saved" {
+		return fmt.Errorf("Denying access to ticket %s in state %s\n", ticketID, status)
+	}
+	// Remove ticket from set of object tickets
+	keyPath := "objectTickets/" + objectID
+
+	if err := client.Do(
+		redis.Cmd(nil, "srem", keyPath, ticketID),
+	); err != nil {
+		return err
+	}
+
+	keyPaths := []string{
+		"/tickets/" + ticketID + "/byteCount",
+		"/tickets/" + ticketID + "/node",
+		"/tickets/" + ticketID + "/status",
+		"/tickets/" + ticketID + "/ticket",
+		"/tickets/" + ticketID + "/object",
+		"/tickets/" + ticketID + "/byteStart",
+		"/tickets/" + ticketID + "/byteEnd",
+		"/tickets/" + ticketID + "/byteCount",
+	}
+	for _, path := range keyPaths {
+		if err := client.Do(redis.Cmd(nil, "del", path)); err != nil {
+			fmt.Printf("Failed to delete %s: %v\n", path, err)
+			return err
+		}
+	}
+	return err
+}
+
+func DeleteObjectReference(objectID string) error {
+	fmt.Printf("DeleteObjectReference %s\n", objectID)
+	keyPaths := []string{
+		// Delete set of tickets associated with the object
+		"objectTickets/" + objectID,
+		// Delete set of nodes the object was written to
+		"objectNodes/" + objectID,
+		// Delete min heap of ticket ids
+		"objectBytes/" + objectID,
+		"/objects/" + objectID + "/size",
+		"/objects/" + objectID + "/status",
+		"/objects/" + objectID + "/writeCounter",
+		"/objects/" + objectID + "/ticketCounter",
+	}
+
+	for _, keyPath := range keyPaths {
+		if err := client.Do(redis.Cmd(nil, "del", keyPath)); err != nil {
+			fmt.Printf("Failed to delete %s: %v\n", keyPath, err)
+			return err
+		}
+	}
+
+	// Finally, delete the object from the set of objects
+	return client.Do(
+		redis.Cmd(nil, "SREM", "objects", objectID),
+	)
 }
 
 func GetObjectSize(objectID string) (int64, error) {

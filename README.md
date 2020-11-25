@@ -38,6 +38,46 @@ ObjectRequestServer: 5004
 TicketRequestServer: 5005
 ```
 
+## Topologies
+
+### Data Topology
+
+Redis is used for all datastructures
+
+```
+# Object is a whole thing of bytes
+SET /objects {Object1, Object2}
+# Ticket is part of an object
+SET objectTickets/$OBJECT_ID {Ticket1, Ticket2}
+# Node is a place where bytes can be written
+SET objectNodes/$OBJECT_ID {Node1, Node1}
+```
+
+Concurrency is managed using the datastructure server as well
+
+# Number of tickets created for an object
+INT /objects/$OBJECT_ID/ticketCounter 1
+# Number of tickets written of an object
+INT /objects/$OBJECT_ID/writeCounter 1
+```
+
+Object Metadata is stored in the same way
+
+```
+# Content type
+STRING /objects/$OBJECT_ID/contentType
+
+# Size in bytes
+INT /objects/$OBJECT_ID/size 
+```
+
+### RPC Topology
+
+```
+API -> Router.CreateObject( CreateObjectRequest ) -> CreateObjectResponse
+API -> Router.DeleteObject( DeleteObjectResponse ) -> DeleteObjectResponse
+```
+
 ### Data Putter : Writing Bytes
 
 DataPutter receives requests of the structure:
@@ -167,4 +207,33 @@ WriteData() -> SendPutterResponse()
 # PutterResponseHandler(PutterResponse) tcp/5002
 MarkTicketComplete()
 UpdateObjectTicketWriteCount()
+```
+
+# Actions
+
+## Delete Object
+
+### Node Code
+
+```
+deleteConfirmations = chan(DeleteTicket)
+confirmationListener( deleteConfirmations )
+
+nofityRouter( tcp.open(router, ????), [ObjectID, TicketID, 1|0]) // Success | Failure
+
+confirmationListener.on('confirmation', notifyRouter( confirmation ))
+# Delete the Ticket from the Node storing it
+DeleteObjectTickets( $OBJECT_ID )
+```
+
+### Router Code
+
+```
+tcp/????.receive([ObjectID, TicketID, 1|0]) {
+    if 1 {
+        datastore.DeleteTicketReference( objectID, ticketID) 
+    } else {
+        error
+    }
+}
 ```

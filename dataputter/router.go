@@ -18,6 +18,12 @@ import (
 	"sync"
 )
 
+const (
+	STANDALONE_NODE_ID         = "TARGET_PUTTER_NODE_UNKNOWN"
+	DELETE_HEADER              = "0DEL0DEL"
+	DEFAULT_AUTHENTICITY_TOKEN = "ABadSharedToken!"
+)
+
 // PutterRequest : Serializable request transmissible to any
 // DataPutter node
 type PutterRequest interface {
@@ -34,7 +40,8 @@ type PutterResponse struct {
 	Status   int
 }
 
-// RouterServer Listens for bytes and creates WriteTickets
+// RouterServer Listens for bytes and creates WriteTickets which are
+// sent to the putterRequests channel for DataPutter Nodes to write
 func RouterServer(port int, putterRequests chan PutterRequest) error {
 	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -70,7 +77,7 @@ func PutterResponseServer(port int, putterResponses chan PutterResponse) error {
 	}
 }
 
-// putterRepsonseHandler : Handles responses sent from PutterNodes in response to
+// putterResponseHandler : Handles responses sent from PutterNodes in response to
 // a PutRequest.
 // When a WriteTicket request completes the response handler takes the
 // message it receives from the DataPutterNode and updates observers of
@@ -141,21 +148,56 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	defer c.Close()
 
-	// Grant a new ObjectID for this TCP connection / file
-	objectID := NextObjectID()
-	fmt.Printf("Handling router connection for Object: %s\n", string(objectID))
+	// Specific header prefix for Delete requests which are handled synchronously
+	deleteRequestHeader := []byte(DELETE_HEADER)
 
 	// [8B size][1450B data]
 	// Limits requests to 16 GB
 	// ContentLength must be bigEndian
 	contentLenBuf := make([]byte, 8)
 	if _, err := c.Read(contentLenBuf); err != nil {
-		fmt.Printf("Unable to get the content lenght of Object %s: %s\n", string(objectID), err)
+		fmt.Printf("Unable to get the content length for request %s\n", err)
+		fmt.Printf("\tReceived: %s\n", string(contentLenBuf))
 		return err
 	}
 	fmt.Printf("Read contentLen as %s\n", string(contentLenBuf))
+
+	// Delete an object
+	// [8B Delete Header][8B ObjectID][16B PSK / Authenticity Token]
+	if string(contentLenBuf) == string(deleteRequestHeader) {
+		fmt.Printf("Handling delete request\n")
+		defer c.Close()
+		presharedToken := []byte(DEFAULT_AUTHENTICITY_TOKEN)
+		objectIDBuf := make([]byte, 8)
+		_, err := c.Read(objectIDBuf)
+		if err != nil {
+			fmt.Printf("Unable to read delete request objectID: %v\n", err)
+			c.Write([]byte("_FAILED_"))
+			return err
+		}
+		fmt.Printf("Handling a delete request for objectID: %s\n", string(objectIDBuf))
+
+		authenticityToken := make([]byte, 16)
+		_, err = c.Read(authenticityToken)
+		if string(authenticityToken) != string(presharedToken) {
+			fmt.Printf("Invalid authenticity token %s\n", string(authenticityToken))
+			c.Write([]byte("_FAILED_"))
+			return fmt.Errorf("Invalid authenticity token for delete request\n")
+		}
+		if err := DeleteObject(string(objectIDBuf)); err != nil {
+			c.Write([]byte("_FAILED_"))
+		} else {
+			c.Write(objectIDBuf)
+		}
+		return nil
+	}
+
 	// err := binary.Read(contentLenBuf, binary.BigEndian, &contentLength)
 	contentLength := int64(binary.BigEndian.Uint64(contentLenBuf))
+
+	// Grant a new ObjectID for this TCP connection / file
+	objectID := NextObjectID()
+	fmt.Printf("Handling router connection for %d-byte Object: %s\n", contentLength, string(objectID))
 
 	fmt.Printf("Opening %d bytes of content from Object %s\n", contentLength, string(objectID))
 	var n int
@@ -207,7 +249,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 		if err := CreateTicket(
 			string(putRequest.WriteTicket.TicketID),
 			putRequest.ObjectID,
-			"TARGET_PUTTER_NODE_UNKNOWN",
+			STANDALONE_NODE_ID,
 			putRequest.ByteStart,
 			putRequest.ByteEnd,
 			putRequest.ByteCount,
@@ -224,7 +266,6 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 		if n > 0 {
 			keyPath, err := TouchTicketCounter(string(objectID))
 
-			// TODO: Start ticketCounter writeCounter monitor exiting when both are equal
 			if err != nil {
 				fmt.Printf("Unable to update ticket counter at %s: %v\n", keyPath, err)
 				return err
@@ -241,6 +282,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 
 			bytesRead += int64(n)
 			fmt.Printf("Read %d of %d bytes\n", n, contentLength)
+			// Send request to write a ticket to Putter nodes
 			putterRequests <- putRequest
 
 			if putRequest.ByteEnd == contentLength {
@@ -265,6 +307,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	// close(writeWaiters)
 	SetObjectByteSize(string(objectID), bytesRead)
 	fmt.Printf("Persisted all %d bytes of Object %s\n", bytesRead, string(objectID))
+
 	// Send the created objectID to the client
 	n, err = c.Write(objectID)
 	if err != nil {
