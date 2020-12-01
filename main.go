@@ -9,9 +9,11 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/mrmod/data-putter/dataputter"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -75,14 +77,39 @@ func main() {
 			}
 		}(putterResponses)
 
-		// Listen for Putter write responses (block) [Router]
-		go dataputter.PutterResponseServer(5002, putterResponses)
+		// Listen for requests to write or delete tickets
+		// WriteNode on :5002
+		writeNodeAddress := "127.0.0.1:5002"
+		writeNodeServer := grpc.NewServer()
+		writeNode := &dataputter.WriteNodeService{}
+		dataputter.RegisterWriteNodeServer(writeNodeServer, writeNode)
+		// WriteNode.Serve()
+		go func() {
+			tcpListener, err := net.Listen("tcp", writeNodeAddress)
+			if err != nil {
+				fmt.Printf("Unable to create tcp/5002 for WriteNode: %v\n", err)
+				return
+			}
+			if err := writeNodeServer.Serve(tcpListener); err != nil {
+				fmt.Printf("Error starting WriteNode on 5002: %v\n", err)
+				return
+			}
+		}()
+		writeNodeConn, err := grpc.Dial(writeNodeAddress, grpc.WithInsecure(), grpc.WithBlock())
+		if err != nil {
+			fmt.Printf("Failed to create WriteNodeClient: %v\n", err)
+			return
+		}
+		defer writeNodeConn.Close()
+		writeClient := dataputter.NewWriteNodeClient(writeNodeConn)
+
 		// Listen for Object read requests [Router]
-		go dataputter.ObjectRequestServer(5004)
+		go dataputter.ObjectRequestServer(5004, writeClient)
 		// Listen for Ticket read requests [PutterNode]
-		go dataputter.TicketRequestServer(5005)
+		go dataputter.TicketRequestServer(5005, writeClient)
 		// Listen for inbound files [Router]
-		dataputter.RouterServer(5001, intake)
+		// TODO: Router is writeNode client
+		dataputter.RunRouterServer(5001, writeClient)
 
 	// DataPutter Node
 	case "putter":

@@ -213,7 +213,10 @@ func GetTicketStatusCode(statusName string) int {
 	return InvalidTicketStatus
 }
 
-// Create a new object reference
+// Create a new object reference and ticket reference
+// Creates: /objects/$objectID/tickets/$ticketID = ticketID
+// Adds to set: objects { objectID }
+// Sets object status: /objects/$objectID/status NEW
 func CreateObject(objectID, ticketID string) error {
 	var err error
 	basePath := "/objects/" + objectID + "/"
@@ -280,6 +283,15 @@ func GetTicketsFromOffset(objectID string, offset int64) (tickets []string, err 
 }
 
 // Create a new ticket in the datastore
+// Creates: /tickets/$ticketID/ticket = ticketID
+// Creates: /tickets/$TICKET_ID/object = OBJECT_ID
+// Creates: /tickets/$TICKET_ID/node = NODE_ID
+// Sets /tickets/$TICKET_ID/byteStart = byteStart
+// Sets /tickets/$TICKET_ID/byteEnd = byteEnd
+// Sets /tickets/$TICKET_ID/byteCount = byteCount
+// Adds byteStart position to set of objectBytes: objectBytes/$objectID { byteStart }
+// Adds ticket to set of Object tickets: objectTickets/$objectID { ticketID }
+// Adds node to set of nodes containing tickets: objectNodes/$objectID { nodeID }
 func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCount int64) error {
 	var err error
 	fmt.Printf("[%d:%d] CreateTicket %s for object %s\n", byteStart, byteEnd, ticketID, objectID)

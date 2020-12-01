@@ -55,6 +55,7 @@ SET objectNodes/$OBJECT_ID {Node1, Node1}
 
 Concurrency is managed using the datastructure server as well
 
+```
 # Number of tickets created for an object
 INT /objects/$OBJECT_ID/ticketCounter 1
 # Number of tickets written of an object
@@ -109,9 +110,10 @@ Bytes are written to the path corresponding to ordered length-2 strings from the
 
 # Running
 
+The whole stack can run locally using the `standAlone` mode
+
 ```
-# Startup and shutdown
-go run main.go singleNode
+go run main.go standAlone
 ```
 
 ## Running : Router Node
@@ -147,6 +149,7 @@ Redis has taken over.
 ## Redis Container
 
 Bring up with no auth in development mode listening on `6379`.
+
 ```
 docker run -it --rm --name putter-redis -p 6379:6379 redis
 ```

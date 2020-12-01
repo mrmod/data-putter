@@ -5,11 +5,12 @@
 package dataputter
 
 import (
+	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 // PutRequest Request with data to put somewhere
@@ -86,9 +87,8 @@ func SendPutResponse(hostPort string, ticketID []byte, statusCode int) error {
 	)
 }
 
-func ServeTicketBytes(c net.Conn) error {
+func ServeTicketBytes(c net.Conn, client WriteNodeClient) error {
 	defer c.Close()
-
 	ticketIDBytes := make([]byte, 8)
 
 	if l, err := c.Read(ticketIDBytes); err != nil || l != 8 {
@@ -97,21 +97,19 @@ func ServeTicketBytes(c net.Conn) error {
 	}
 
 	ticketID := string(ticketIDBytes)
-	fmt.Printf("Serving ticket %s\n", ticketID)
-
-	filename := ObjectPathString(string(ticketID)) + "/obj"
-
-	ticketBytes, err := ioutil.ReadFile(filename)
-
-	if err != nil {
-		return err
+	readRequest := &NodeReadRequest{
+		TicketId: ticketID,
 	}
-	n, err := c.Write(ticketBytes)
-	if err != nil {
-		return err
+	fmt.Printf("ServeTicketBytes for %s\n", ticketID)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+
+	response, err := client.Read(ctx, readRequest)
+	defer cancel()
+
+	if response.Status != 0 {
+		fmt.Printf("Failed to read ticket %s\n", response.TicketId)
 	}
-	fmt.Printf("\tServed %d bytes for ticket %s\n", n, ticketID)
-	return nil
+	return err
 }
 
 // Handles confirmations from a data putter node that it has deleted
@@ -167,6 +165,8 @@ func DeleteReferenceHandler(deleteConfirmations chan DeleteTicketConfirmation) {
 	}
 }
 
+type DeleteTicketRequest struct{}
+
 // Delete an objects tickets from DataPutter Nodes
 // * Delete bytes (Ticket bytes) from Putter Nodes
 // * Delete Ticket references
@@ -195,19 +195,23 @@ func DeleteObject(objectID string) error {
 		nodeID, err := GetTicketNode(ticketID)
 		if err != nil {
 			return fmt.Errorf("Unable to find node for ticket %s: %v\n", ticketID, err)
+		} else {
+			fmt.Printf("DEBUG: deleting ticket [%d/%d] %s from node %s\n",
+				ticketIndex, len(tickets), ticketID, nodeID,
+			)
 		}
-		deleteTicketRequest := DeleteTicketRequest{
-			ticketID,
-			objectID,
-			nodeID,
-			int64(ticketIndex),
-		}
-		fmt.Printf("Created delete request for %s/%s on node %s\n",
-			objectID,
-			ticketID,
-			nodeID,
-		)
-		delRequests <- deleteTicketRequest
+		// deleteTicketRequest := DeleteTicketRequest{
+		// 	ticketID,
+		// 	objectID,
+		// 	nodeID,
+		// 	int64(ticketIndex),
+		// }
+		// fmt.Printf("Created delete request for %s/%s on node %s\n",
+		// 	objectID,
+		// 	ticketID,
+		// 	nodeID,
+		// )
+		// delRequests <- deleteTicketRequest
 	}
 
 	return nil
