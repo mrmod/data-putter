@@ -25,17 +25,6 @@ type DeleteTicketConfirmation struct {
 	Success bool
 }
 
-type DeleteTicketRequest struct {
-	// TicketID: Opaque
-	TicketID string
-	// ObjectID: Opaque
-	ObjectID string
-	// NodeId
-	NodeID string
-	// TicketIndex: Index of ticket in the total count
-	TicketIndex int64
-}
-
 // ObjectWriteTicket Contains a WriteTicket for a specific object
 type ObjectWriteTicket struct {
 	// ObjectID : Opaque unique string

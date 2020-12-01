@@ -11,17 +11,21 @@
 package dataputter
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 const (
 	STANDALONE_NODE_ID         = "TARGET_PUTTER_NODE_UNKNOWN"
 	DELETE_HEADER              = "0DEL0DEL"
 	DEFAULT_AUTHENTICITY_TOKEN = "ABadSharedToken!"
+	NodeSuccess                = 0
+	NodeFailed                 = 1
 )
 
 // PutterRequest : Serializable request transmissible to any
@@ -40,9 +44,18 @@ type PutterResponse struct {
 	Status   int
 }
 
+type routerServer struct {
+	UnimplementedRouterServer
+}
+
+func (s *routerServer) CreateObject(ctx context.Context, req *CreateObjectRequest) (*ObjectActionResponse, error) {
+	return &ObjectActionResponse{}, nil
+}
+
 // RouterServer Listens for bytes and creates WriteTickets which are
 // sent to the putterRequests channel for DataPutter Nodes to write
-func RouterServer(port int, putterRequests chan PutterRequest) error {
+func RunRouterServer(port int, client WriteNodeClient) error {
+	// rpcServer := RegisterRouterServer(rpcServer, &routerServer{})
 	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return err
@@ -55,7 +68,7 @@ func RouterServer(port int, putterRequests chan PutterRequest) error {
 			continue
 		}
 		// Handle a request to store a file/bunch-of-bytes somewhere
-		go putterRequestHandler(conn, putterRequests)
+		go routerCreateObject(conn, client)
 	}
 }
 
@@ -145,7 +158,7 @@ func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) erro
 // ObjectID for the file and then WriteTickets for each byte region.
 // When it has written all the bytes sent, it will reply with the 8 Byte
 // ObjectID it has assigned.
-func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
+func routerCreateObject(c net.Conn, client WriteNodeClient) error {
 	defer c.Close()
 
 	// Specific header prefix for Delete requests which are handled synchronously
@@ -160,7 +173,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 		fmt.Printf("\tReceived: %s\n", string(contentLenBuf))
 		return err
 	}
-	fmt.Printf("Read contentLen as %s\n", string(contentLenBuf))
+	// fmt.Printf("Read contentLen as %s\n", string(contentLenBuf))
 
 	// Delete an object
 	// [8B Delete Header][8B ObjectID][16B PSK / Authenticity Token]
@@ -197,12 +210,17 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 
 	// Grant a new ObjectID for this TCP connection / file
 	objectID := NextObjectID()
+	// coRequest := &CreateObjectRequest{
+	// 	ContentLength: contentLength,
+	// 	ObjectID:      objectID,
+	// }
+
 	fmt.Printf("Handling router connection for %d-byte Object: %s\n", contentLength, string(objectID))
 
 	fmt.Printf("Opening %d bytes of content from Object %s\n", contentLength, string(objectID))
 	var n int
 	var err error
-	var bytesRead = int64(0)
+	var objBytesCnt = int64(0)
 
 	var writeInProgress sync.WaitGroup
 	writeInProgress.Add(1)
@@ -219,82 +237,80 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 		n, err = c.Read(dataStream)
 		fmt.Printf("\tRead %d bytes from Object %s stream\n", n, string(objectID))
 		if err != nil && err != io.EOF {
-			fmt.Printf("Error reading bytes from %d onward: %v\n", bytesRead, err)
+			fmt.Printf("Error reading bytes from %d onward: %v\n", objBytesCnt, err)
 			return err
 		}
 
 		if err == io.EOF {
-			fmt.Printf("\tEOF Read %d bytes of object %s\n", bytesRead, string(objectID))
+			fmt.Printf("\tEOF Read %d bytes of object %s\n", objBytesCnt, string(objectID))
 			break
 		}
 
-		putRequest := ObjectWriteTicket{
-			ObjectID:  string(objectID),
-			ByteStart: bytesRead,
-			ByteEnd:   bytesRead + int64(n),
+		// Create a write request for a WriteNode
+		writeRequest := NodeWriteRequest{
+			ObjectId:  string(objectID),
+			TicketId:  string(ticketID),
+			ByteStart: objBytesCnt,
+			ByteEnd:   objBytesCnt + int64(n),
 			ByteCount: int64(n),
-			WriteTicket: WriteTicket{
-				TicketID: ticketID,
-				Checksum: make([]byte, 8),
-				Data:     dataStream,
-			},
+			Data:      dataStream,
 		}
+
 		// Create a new object
-		if err := CreateObject(putRequest.ObjectID, string(putRequest.TicketID)); err != nil {
-			fmt.Printf("Unable to create Object %s: %v\n", putRequest.ObjectID, err)
+		if err := CreateObject(writeRequest.ObjectId, writeRequest.TicketId); err != nil {
+			fmt.Printf("Unable to create Object %s: %v\n", writeRequest.ObjectId, err)
 			return err
 		}
 
-		// Create a new ticket for each put request
-		if err := CreateTicket(
-			string(putRequest.WriteTicket.TicketID),
-			putRequest.ObjectID,
-			STANDALONE_NODE_ID,
-			putRequest.ByteStart,
-			putRequest.ByteEnd,
-			putRequest.ByteCount,
-		); err != nil {
-			fmt.Printf("Unable to create Ticket %s on Object %s: %v\n",
-				string(putRequest.TicketID),
-				putRequest.ObjectID,
-				err,
+		// Set the object status to Writing
+		err = SetObjectStatus(writeRequest.ObjectId, ObjectStatus[ObjectWriting])
+		if err != nil {
+			fmt.Printf("Unable to put object in Writing status: %v\n", err)
+			return err
+		}
+
+		// Counter of Tickets assigned to the Object
+		_, err := TouchTicketCounter(writeRequest.ObjectId)
+
+		// Write the data to some node
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		response, err := client.Write(ctx, &writeRequest)
+		defer cancel()
+		fmt.Printf("TicketWriteResponse for %s of %s: %d\n", response.TicketId, response.ObjectId, response.Status)
+		if err != nil {
+			fmt.Printf("Error writing ticket %s of %s to NodeWriter: %v\n",
+				writeRequest.TicketId,
+				writeRequest.ObjectId,
+				err)
+
+		}
+		if response.Status != 0 {
+			fmt.Printf("Error writing ticket %s of %s, got status %d\n",
+				writeRequest.TicketId,
+				writeRequest.ObjectId,
+				response.Status)
+		}
+
+		// Create the ticket in the datastore on the response
+		err = CreateTicket(response.TicketId, response.ObjectId, response.NodeId, response.ByteStart, response.ByteEnd, response.ByteCount)
+		if err != nil {
+			fmt.Printf("Unable to save ticket to datastore: %v\n", err)
+			return err
+		}
+		objBytesCnt += int64(n)
+		fmt.Printf("[%d/%d] Read %d of %d bytes\n", objBytesCnt, contentLength, n, contentLength)
+		_, err = TouchWriteCounter(response.ObjectId)
+		if err != nil {
+			fmt.Printf("Unable to update write counter of object %s: %v\n", response.ObjectId, err)
+			return err
+		}
+		if objBytesCnt == contentLength {
+			fmt.Printf("\tRead all %d bytes of %d for Object %s\n",
+				objBytesCnt,
+				contentLength,
+				writeRequest.ObjectId,
 			)
-
-			return err
-		}
-		// Send putter request to writer
-		if n > 0 {
-			keyPath, err := TouchTicketCounter(string(objectID))
-
-			if err != nil {
-				fmt.Printf("Unable to update ticket counter at %s: %v\n", keyPath, err)
-				return err
-			}
-			// Create a ticket
-			if bytesRead == int64(0) {
-				fmt.Printf("Setting object %s writing to 'Writing'\n", string(objectID))
-				if err := SetObjectStatus(putRequest.ObjectID, ObjectStatus[ObjectWriting]); err != nil {
-					fmt.Printf("Unable to move Object %s into writing status: %v\n", putRequest.ObjectID, err)
-					return err
-				}
-				fmt.Printf("Set Object %s status to %s\n", putRequest.ObjectID, ObjectStatus[ObjectWriting])
-			}
-
-			bytesRead += int64(n)
-			fmt.Printf("Read %d of %d bytes\n", n, contentLength)
-			// Send request to write a ticket to Putter nodes
-			putterRequests <- putRequest
-
-			if putRequest.ByteEnd == contentLength {
-				fmt.Printf("\tRead all %d bytes of %d for Object %s\n",
-					putRequest.ByteEnd,
-					contentLength,
-					string(objectID),
-				)
-				break
-			}
-		} else {
-			fmt.Printf("Unexpected 0 byte read\n")
+			break
 		}
 	}
 	// At this point we have access to the length of the object in bytes
@@ -305,8 +321,8 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 	fmt.Printf("Waiting for WatchCounter to release inProgress for %s\n", string(objectID))
 	writeInProgress.Wait()
 	// close(writeWaiters)
-	SetObjectByteSize(string(objectID), bytesRead)
-	fmt.Printf("Persisted all %d bytes of Object %s\n", bytesRead, string(objectID))
+	SetObjectByteSize(string(objectID), objBytesCnt)
+	fmt.Printf("Persisted all %d bytes of Object %s\n", objBytesCnt, string(objectID))
 
 	// Send the created objectID to the client
 	n, err = c.Write(objectID)
@@ -314,7 +330,7 @@ func putterRequestHandler(c net.Conn, putterRequests chan PutterRequest) error {
 		fmt.Printf("Failed to notify client [%d]objectID %s was committed successfully\n", n, objectID)
 		return err
 	}
-	fmt.Printf("OK %d byte of [%d]objectID %s write committed\n", bytesRead, n, objectID)
+	fmt.Printf("OK %d byte of [%d]objectID %s write committed\n", objBytesCnt, n, objectID)
 
 	return c.Close()
 }

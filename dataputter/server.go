@@ -30,27 +30,27 @@ func WriteTicketHandler(work chan WriteTicket) {
 // * Delete Object reference
 // * Has no datastore access
 func DeleteTicketHandler(requests chan DeleteTicketRequest, confirmations chan DeleteTicketConfirmation) {
-	for req := range requests {
-		fmt.Printf("DeleteTicketHandler deleting %s/%s on node %s\n",
-			req.ObjectID,
-			req.TicketID,
-			req.NodeID,
-		)
-		filename := ObjectPathString(req.TicketID) + "/obj"
-		err := deleteBytes(filename)
-		if err != nil {
-			fmt.Printf("DeleteTicketHandler failed to delete %s: %v\n", filename, err)
-		}
-		confirmation := DeleteTicketConfirmation{
-			req.TicketID,
-			req.ObjectID,
-			req.NodeID,
-			req.TicketIndex,
-			err == nil,
-		}
+	// for req := range requests {
+	// fmt.Printf("DeleteTicketHandler deleting %s/%s on node %s\n",
+	// 	req.ObjectID,
+	// 	req.TicketID,
+	// 	req.NodeID,
+	// )
+	// filename := ObjectPathString(req.TicketID) + "/obj"
+	// err := deleteBytes(filename)
+	// if err != nil {
+	// 	fmt.Printf("DeleteTicketHandler failed to delete %s: %v\n", filename, err)
+	// }
+	// confirmation := DeleteTicketConfirmation{
+	// 	req.TicketID,
+	// 	req.ObjectID,
+	// 	req.NodeID,
+	// 	req.TicketIndex,
+	// 	err == nil,
+	// }
 
-		confirmations <- confirmation
-	}
+	// confirmations <- confirmation
+	// }
 }
 
 // [8B TicketID][8B Checksum][nB Data]
