@@ -180,7 +180,6 @@ func routerCreateObject(c net.Conn, client WriteNodeClient) error {
 	if string(contentLenBuf) == string(deleteRequestHeader) {
 		fmt.Printf("Handling delete request\n")
 		defer c.Close()
-		presharedToken := []byte(DEFAULT_AUTHENTICITY_TOKEN)
 		objectIDBuf := make([]byte, 8)
 		_, err := c.Read(objectIDBuf)
 		if err != nil {
@@ -188,19 +187,21 @@ func routerCreateObject(c net.Conn, client WriteNodeClient) error {
 			c.Write([]byte("_FAILED_"))
 			return err
 		}
-		fmt.Printf("Handling a delete request for objectID: %s\n", string(objectIDBuf))
 
-		authenticityToken := make([]byte, 16)
-		_, err = c.Read(authenticityToken)
-		if string(authenticityToken) != string(presharedToken) {
-			fmt.Printf("Invalid authenticity token %s\n", string(authenticityToken))
+		fmt.Printf("Handling a delete request for objectID: %s\n", string(objectIDBuf))
+		// DeleteTicketHandler
+		tickets, err := DeleteObject(
+			string(objectIDBuf),
+			client,
+		)
+		if err != nil {
+			fmt.Printf("Failed to delete %s: %v\n", string(objectIDBuf), err)
 			c.Write([]byte("_FAILED_"))
-			return fmt.Errorf("Invalid authenticity token for delete request\n")
+			return err
 		}
-		if err := DeleteObject(string(objectIDBuf)); err != nil {
-			c.Write([]byte("_FAILED_"))
-		} else {
-			c.Write(objectIDBuf)
+		c.Write(objectIDBuf)
+		for _, ticket := range tickets {
+			fmt.Printf("Deleted %s\n", ticket)
 		}
 		return nil
 	}

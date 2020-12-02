@@ -115,104 +115,79 @@ func ServeTicketBytes(c net.Conn, client WriteNodeClient) error {
 // Handles confirmations from a data putter node that it has deleted
 // the bytes associated with a ticket
 // * Has Datastore access
-func DeleteReferenceHandler(deleteConfirmations chan DeleteTicketConfirmation) {
-	for confirmation := range deleteConfirmations {
-		if !confirmation.Success {
-			fmt.Printf("Failed to delete ticket bytes %s/%s\n",
-				confirmation.ObjectID,
-				confirmation.TicketID,
-			)
-			continue
-		}
-		err := DeleteTicket(
-			confirmation.ObjectID,
-			confirmation.TicketID,
-		)
-
-		if err != nil {
-			fmt.Printf("Failed to delete ticket reference %s/%s: %v\n",
-				confirmation.ObjectID,
-				confirmation.TicketID,
-				err,
-			)
-			continue
-		}
-
-		remainingTickets, err := ReduceTicketCounter(confirmation.ObjectID)
-		if err != nil {
-			fmt.Printf("Failed to reduce tickets associated with %s: %v\n",
-				confirmation.ObjectID,
-				err,
-			)
-		}
-		fmt.Printf("%d tickets remaining of %s\n",
-			remainingTickets,
-			confirmation.ObjectID,
-		)
-
-		if remainingTickets == 0 {
-			fmt.Printf("All ticket references for %s deleted\n", confirmation.ObjectID)
-			err = DeleteObjectReference(confirmation.ObjectID)
-			if err != nil {
-				fmt.Printf("Failed to delete object reference for %s: %v\n",
-					confirmation.ObjectID,
-					err,
-				)
-			} else {
-				fmt.Printf("Successfully deleted %s\n", confirmation.ObjectID)
-			}
-		}
+func DeleteObjectReferences(objectID, ticketID string) (Ticket, error) {
+	ticket, err := GetTicketMetadata(ticketID)
+	if err != nil {
+		return ticket, err
 	}
-}
 
-type DeleteTicketRequest struct{}
+	err = DeleteTicket(objectID, ticketID)
+	if err != nil {
+		return ticket, err
+	}
+
+	remainingTickets, err := ReduceTicketCounter(objectID)
+	if err != nil {
+		return ticket, err
+	}
+
+	if remainingTickets > 0 {
+		fmt.Printf("%d more tickets remain for %s\n", remainingTickets, objectID)
+		return ticket, nil
+	}
+
+	fmt.Printf("All tickets referenced by %s have been deleted\n", objectID)
+	return ticket, DeleteObjectReference(objectID)
+}
 
 // Delete an objects tickets from DataPutter Nodes
 // * Delete bytes (Ticket bytes) from Putter Nodes
 // * Delete Ticket references
 // * Delete Object reference
 // * Has Datastore access
-func DeleteObject(objectID string) error {
+func DeleteObject(objectID string, client WriteNodeClient) ([]Ticket, error) {
 	tickets, err := GetObjectTickets(objectID)
+	deletedTickets := []Ticket{}
+
 	if err != nil {
 		fmt.Printf("Delete object failed to get tickets for %s: %v\n", objectID, err)
-		return err
+		return deletedTickets, err
 	}
-
-	delRequests := make(chan DeleteTicketRequest, 2)
-	delConfirmations := make(chan DeleteTicketConfirmation, 2)
-
 	// Remove the bytes from disk
-	// NOTE: This is simulation configuration. The delete ticket
-	// request must be sent to a TCP connected DataPutter
-	// to delete bytes.
-	go DeleteTicketHandler(delRequests, delConfirmations)
-	// Remove the references from the datastore
-	go DeleteReferenceHandler(delConfirmations)
-
 	// Discover ticket information in a Datastore connected role
 	for ticketIndex, ticketID := range tickets {
 		nodeID, err := GetTicketNode(ticketID)
 		if err != nil {
-			return fmt.Errorf("Unable to find node for ticket %s: %v\n", ticketID, err)
+			return deletedTickets, fmt.Errorf("Unable to find node for ticket %s: %v\n", ticketID, err)
 		} else {
 			fmt.Printf("DEBUG: deleting ticket [%d/%d] %s from node %s\n",
 				ticketIndex, len(tickets), ticketID, nodeID,
 			)
 		}
-		// deleteTicketRequest := DeleteTicketRequest{
-		// 	ticketID,
-		// 	objectID,
-		// 	nodeID,
-		// 	int64(ticketIndex),
-		// }
-		// fmt.Printf("Created delete request for %s/%s on node %s\n",
-		// 	objectID,
-		// 	ticketID,
-		// 	nodeID,
-		// )
-		// delRequests <- deleteTicketRequest
+		deleteRequest := &NodeDeleteRequest{
+			ObjectId: objectID,
+			TicketId: ticketID,
+			NodeId:   nodeID,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		res, err := client.Delete(ctx, deleteRequest)
+		defer cancel()
+		if err != nil || res.Status != 0 {
+			fmt.Printf("Error deleting ticket bytes for %s of %s: %v\n",
+				deleteRequest.TicketId,
+				deleteRequest.ObjectId,
+				err)
+			return deletedTickets, err
+		}
+		ticket, err := DeleteObjectReferences(
+			deleteRequest.ObjectId,
+			deleteRequest.TicketId,
+		)
+		if err != nil {
+			return deletedTickets, err
+		}
+		deletedTickets = append(deletedTickets, ticket)
 	}
 
-	return nil
+	return deletedTickets, nil
 }
