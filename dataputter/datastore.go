@@ -29,6 +29,7 @@ package dataputter
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -380,14 +381,79 @@ func GetObjectTickets(objectID string) ([]string, error) {
 	return tickets, err
 }
 
+type Ticket struct {
+	ByteCount, ByteStart, ByteEnd int64
+	ObjectID, TicketID, NodeID    string
+	KeyPath                       string
+}
+
+func (t Ticket) String() string {
+	return fmt.Sprintf("[%d:%d] %d bytes %s/%s @ %s [%s]",
+		t.ByteStart, t.ByteEnd, t.ByteCount,
+		t.ObjectID, t.TicketID, t.NodeID,
+		t.KeyPath,
+	)
+}
+
+// GetTicketMetadata An entire tickets metadata without data
+func GetTicketMetadata(ticketID string) (Ticket, error) {
+	ticket := Ticket{
+		KeyPath: "/tickets/" + ticketID,
+	}
+	intKeys := map[string]string{
+		"ByteCount": "/tickets/" + ticketID + "/byteCount",
+		"ByteStart": "/tickets/" + ticketID + "/byteStart",
+		"ByteEnd":   "/tickets/" + ticketID + "/byteEnd",
+	}
+	stringKeys := map[string]string{
+		"NodeID":   "/tickets/" + ticketID + "/node",
+		"TicketID": "/tickets/" + ticketID + "/ticket",
+		"ObjectID": "/tickets/" + ticketID + "/object",
+	}
+	// Force dereference to object pointer
+	ticketValue := reflect.ValueOf(&ticket).Elem()
+
+	for field, path := range intKeys {
+		var v int64
+		if err := client.Do(redis.Cmd(&v, "get", path)); err != nil {
+			fmt.Printf("Error getting %s: %v\n", path, err)
+			return ticket, err
+		}
+		fmt.Printf("TicketMetadata: %s = %d\n", path, v)
+		if ticketValue.FieldByName(field).CanSet() {
+			ticketValue.FieldByName(field).SetInt(v)
+		} else {
+			fmt.Printf("Unable to set field %s\n", field)
+		}
+	}
+
+	for field, path := range stringKeys {
+		var v string
+		if err := client.Do(redis.Cmd(&v, "get", path)); err != nil {
+			fmt.Printf("Error getting %s: %v\n", path, err)
+			return ticket, err
+		}
+		fmt.Printf("TicketMetadata: %s = %v\n", path, v)
+
+		if ticketValue.FieldByName(field).CanSet() {
+			ticketValue.FieldByName(field).SetString(v)
+		} else {
+			fmt.Printf("Unable to set field %s\n", field)
+		}
+	}
+
+	return ticket, nil
+}
+
 func DeleteTicket(objectID, ticketID string) error {
 	status, err := GetTicketStatus(ticketID)
 	if err != nil {
 		return err
 	}
-	if status != "saved" {
+	if status != "saved" && status != "" {
 		return fmt.Errorf("Denying access to ticket %s in state %s\n", ticketID, status)
 	}
+	fmt.Printf("Deleting %s/%s with status %s\n", objectID, ticketID, status)
 	// Remove ticket from set of object tickets
 	keyPath := "objectTickets/" + objectID
 
@@ -405,13 +471,14 @@ func DeleteTicket(objectID, ticketID string) error {
 		"/tickets/" + ticketID + "/object",
 		"/tickets/" + ticketID + "/byteStart",
 		"/tickets/" + ticketID + "/byteEnd",
-		"/tickets/" + ticketID + "/byteCount",
+		"/objects/" + objectID + "/tickets/" + ticketID,
 	}
 	for _, path := range keyPaths {
 		if err := client.Do(redis.Cmd(nil, "del", path)); err != nil {
 			fmt.Printf("Failed to delete %s: %v\n", path, err)
 			return err
 		}
+		fmt.Printf("Deleted %s\n", path)
 	}
 	return err
 }
@@ -436,6 +503,7 @@ func DeleteObjectReference(objectID string) error {
 			fmt.Printf("Failed to delete %s: %v\n", keyPath, err)
 			return err
 		}
+		fmt.Printf("Deleted %s\n", keyPath)
 	}
 
 	// Finally, delete the object from the set of objects
