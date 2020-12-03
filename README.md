@@ -5,17 +5,17 @@ Stores bytes on disks.
 ```
 Client -> [8B ContentLength | 1450B Data] -> Router
 
-Router -> [8B TicketID | 8B Checksum | 1450B Data] -> PutterNode
+Router -> GRPC -> WriteNode
 
-Server -> WriteDataToDisk() -> [8B TicketID | 1B Status] -> Client
+WriteNode -> WriteDataToDisk() -> GRPC -> Router.NodeClient
 ```
 
 ## Overview
 
-Simple Object Store consists of a DataPutter, Router, and Datastore.
+Simple Object Store consists of a WriteNode, Router, and Datastore.
 
 * A File is sent to **Router** who turns it into 1450-byte chunks.
-* Each chunk is sent to a **DataPutter** to store
+* Each chunk is sent to a **WriteNode** to store
 * When all chunks are stored, the file has been "Received"
 
 ### Roles and Ports
@@ -26,16 +26,12 @@ Simple Object Store consists of a DataPutter, Router, and Datastore.
 Router: 5001
 
 # RunsOn: Router
-# Handles responses to ticket write requests
-TicketResponseServer: 5002
-
-# RunsOn: Router
-# Handles requests to retrieve bytes of an object
+# Handles Read requests
 ObjectRequestServer: 5004
 
-# RunsOn: PutterNode
-# Handle responses to ticket read requests
-TicketRequestServer: 5005
+# RunsOn: WriteNode
+# Handles Read/Write/Delete of bytes/Tickets
+WriteNode: 5002
 ```
 
 ## Topologies
@@ -74,20 +70,20 @@ INT /objects/$OBJECT_ID/size
 
 ### RPC Topology
 
-```
-API -> Router.CreateObject( CreateObjectRequest ) -> CreateObjectResponse
-API -> Router.DeleteObject( DeleteObjectResponse ) -> DeleteObjectResponse
-```
-
-### Data Putter : Writing Bytes
-
-DataPutter receives requests of the structure:
+## Router
 
 ```
----------------- ---------------- ----~----
-| 8B            | 8B             | 1450B   |
-| TicketID      |Checksum        |Data     |
----------------- ---------------- ---------
+TCP -> Router:5001 -> WriteNode.RPC[Write, Delete]
+TCP -> Router:5004 -> WriteNode.RPC[Read]
+```
+
+## Write Node
+
+```
+Router -> WriteNode.Read( NodeReadRequest ) -> NodeResponse
+Router -> WriteNode.Write( NodeWriteRequest ) -> NodeResponse
+Router -> WriteNode.Delete( NodeDeleteRequest ) -> NodeResponse
+
 ```
 
 #### TicketID
@@ -114,37 +110,20 @@ The whole stack can run locally using the `standAlone` mode
 
 ```
 go run main.go standAlone
-```
 
-## Running : Router Node
+# tcp/5001 - Object Write/Delete
+# tcp/5004 - Object Read
 
-```
-go run main.go router
-```
-
-Files will be rooted in the path, writing to `./data`, you are in and list on `tcp/5001` for TCP byte-streams which look like `WriteTicket`s.
-
-## Running : Putter Node
-
-```
-go run main.go server
-```
-
-Files will be rooted in the path you are in and listen on `tcp/5000` for `WriteTicket`s which it replies to with `WriteTicketResponse`.
-
-## Running : Loopback client
-
-Sends data to `127.0.0.1:5000` and requires the Putter Node server to be running.
-
-```
-go run main.go loopback
+# tcp/5002 - Ticket Read/Write/Delete
 ```
 
 # Developing
 
-ETCD ended up being a very poor developer experience due to scattered documentation, poor SEO, and unexpected serialization of inputs.
+## Compiling Proto
 
-Redis has taken over.
+```
+compile_proto.ps1
+```
 
 ## Redis Container
 
@@ -152,91 +131,4 @@ Bring up with no auth in development mode listening on `6379`.
 
 ```
 docker run -it --rm --name putter-redis -p 6379:6379 redis
-```
-
-# Building
-
-To build for a release the OS-appropriate `build-docker` script will take care of your needs creating an image named `data-putter`.
-
-You may run the result in router mode with `run-in-docker` for your OS. Keep in mind, Redis may not be on the same network.
-
-See Integration of Redis and DataPutterRouter in Testing to see how networking might be setup.
-
-# Testing
-
-## Integration of Redis and DataPutterRouter
-
-This will allow clients to send data to the DataPutterRouter from the host networks and for the DataPutterRouter to contact a Redis instance.
-
-```
-docker network create dataputterNet
-docker run -it --rm --name putter-redis -p 6379:6379 --net dataputterNet redis
-docker run -it --rm --name putter-router -e REDIS_HOSTPORT=putter-redis:6379 -p 5001:5001 -p 5002:5002 --net dataputterNet data-putter router
-```
-
-## Simulation : Accepting Writes
-
-The system can be started as a single node object store with
-
-```
-go run main.go router
-```
-
-This will start Router and encapsulate a PutterRequest and PutterResponse handler. This operates conceptually as:
-
-```
-# Router tcp/5001
-while 1 == 1 {
-    onConnection {
-
-        createObjectID
-
-        for packet in connectionPackets {
-
-            UpdateObjectTicketCount()
-            sendWriteRequest() -> PutterRequestHandler()
-            
-            if EOF { break }
-        }
-        waitOnAllWrites
-        
-        OBJECT WRITTEN OK
-    }
-}
-
-# PutterRequestHandler(PutterRequest)
-WriteData() -> SendPutterResponse()
-
-# PutterResponseHandler(PutterResponse) tcp/5002
-MarkTicketComplete()
-UpdateObjectTicketWriteCount()
-```
-
-# Actions
-
-## Delete Object
-
-### Node Code
-
-```
-deleteConfirmations = chan(DeleteTicket)
-confirmationListener( deleteConfirmations )
-
-nofityRouter( tcp.open(router, ????), [ObjectID, TicketID, 1|0]) // Success | Failure
-
-confirmationListener.on('confirmation', notifyRouter( confirmation ))
-# Delete the Ticket from the Node storing it
-DeleteObjectTickets( $OBJECT_ID )
-```
-
-### Router Code
-
-```
-tcp/????.receive([ObjectID, TicketID, 1|0]) {
-    if 1 {
-        datastore.DeleteTicketReference( objectID, ticketID) 
-    } else {
-        error
-    }
-}
 ```

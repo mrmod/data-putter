@@ -145,7 +145,7 @@ func DeleteObjectReferences(objectID, ticketID string) (Ticket, error) {
 // * Delete Ticket references
 // * Delete Object reference
 // * Has Datastore access
-func DeleteObject(objectID string, client WriteNodeClient) ([]Ticket, error) {
+func DeleteObject(objectID string) ([]Ticket, error) {
 	tickets, err := GetObjectTickets(objectID)
 	deletedTickets := []Ticket{}
 
@@ -169,9 +169,23 @@ func DeleteObject(objectID string, client WriteNodeClient) ([]Ticket, error) {
 			TicketId: ticketID,
 			NodeId:   nodeID,
 		}
+
+		// TODO: Should use service lookup to find nodes
+		// during each segment
+		fmt.Println("Creating nodeClient")
+		nodeClient, err := NewClient("127.0.0.1:5002")
+		fmt.Println("Created nodeClient")
+		if err != nil {
+			fmt.Printf("Unable to create NodeClient: %v\n", err)
+			return deletedTickets, err
+		}
+		defer nodeClient.Close()
+
+		// Send Delete to NodeClient
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		res, err := client.Delete(ctx, deleteRequest)
+		res, err := nodeClient.Delete(ctx, deleteRequest)
 		defer cancel()
+
 		if err != nil || res.Status != 0 {
 			fmt.Printf("Error deleting ticket bytes for %s of %s: %v\n",
 				deleteRequest.TicketId,

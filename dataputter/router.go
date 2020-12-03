@@ -28,22 +28,6 @@ const (
 	NodeFailed                 = 1
 )
 
-// PutterRequest : Serializable request transmissible to any
-// DataPutter node
-type PutterRequest interface {
-	Write() error
-	GetTicketID() []byte
-	String() string
-}
-
-// PutterResponse : Sent by Putter when request has finished
-type PutterResponse struct {
-	ObjectID string
-	TicketID []byte
-	NodeID   string
-	Status   int
-}
-
 type routerServer struct {
 	UnimplementedRouterServer
 }
@@ -54,7 +38,7 @@ func (s *routerServer) CreateObject(ctx context.Context, req *CreateObjectReques
 
 // RouterServer Listens for bytes and creates WriteTickets which are
 // sent to the putterRequests channel for DataPutter Nodes to write
-func RunRouterServer(port int, client WriteNodeClient) error {
+func RunRouterServer(port int) error {
 	// rpcServer := RegisterRouterServer(rpcServer, &routerServer{})
 	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -68,97 +52,15 @@ func RunRouterServer(port int, client WriteNodeClient) error {
 			continue
 		}
 		// Handle a request to store a file/bunch-of-bytes somewhere
-		go routerCreateObject(conn, client)
+		go routerCreateObject(conn)
 	}
-}
-
-// PutterResponseServer : Listens for TicketID and Status responses sent from PutterNodes
-func PutterResponseServer(port int, putterResponses chan PutterResponse) error {
-	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return err
-	}
-	fmt.Printf("PutterResponseServer running on port %d\n", port)
-	for {
-		conn, err := s.Accept()
-		if err != nil {
-			fmt.Printf("Error in connection: %v\n", err)
-			continue
-		}
-		fmt.Println("Handling PutterResponse connection")
-		go putterResponseHandler(conn, putterResponses)
-	}
-}
-
-// putterResponseHandler : Handles responses sent from PutterNodes in response to
-// a PutRequest.
-// When a WriteTicket request completes the response handler takes the
-// message it receives from the DataPutterNode and updates observers of
-// putterResponses
-func putterResponseHandler(c net.Conn, putterResponses chan PutterResponse) error {
-	defer c.Close()
-
-	// [8B TicketID][1B Status]
-	dataStream := make([]byte, 9)
-
-	n, err := c.Read(dataStream)
-	if err != nil {
-		fmt.Printf("Error reading putterResponse: %v\n", err)
-		return err
-	}
-
-	// [8B Ticket][1B Status]
-	if n == 9 {
-		putterResponse := PutterResponse{
-			TicketID: dataStream[0:8],
-			Status:   int(dataStream[8]),
-			NodeID:   c.RemoteAddr().String(),
-		}
-
-		fmt.Printf("PutterResponse from Node %s for Ticket %s: %d\n",
-			putterResponse.NodeID,
-			string(putterResponse.TicketID),
-			putterResponse.Status,
-		)
-
-		waitForObjectID := make(chan string, 1)
-
-		spinOnObjectCreation := func(tid string, waiter chan string) {
-			defer close(waitForObjectID)
-			// A watcher might be more elegant
-			for {
-				objectID, err := GetTicketObject(tid)
-				if err != nil {
-					fmt.Printf("Unable to find objectID for ticket %s: %v\n", tid, err)
-				} else {
-					// Ignore the keypath
-					_, err = TouchWriteCounter(objectID)
-					if err != nil {
-						fmt.Printf("\tFailed to update write counter on %s\n", objectID)
-					} else {
-						fmt.Printf("\tUpdated Object writeCounter of %s because of ticket %s\n", objectID, tid)
-					}
-					waiter <- objectID
-					break
-				}
-			}
-		}
-
-		go spinOnObjectCreation(string(putterResponse.TicketID), waitForObjectID)
-
-		putterResponse.ObjectID = <-waitForObjectID
-		fmt.Printf("\tObject %s exists\n", putterResponse.ObjectID)
-		putterResponses <- putterResponse
-		return nil
-	}
-	return nil
 }
 
 // putterRequestHandler : Handles a single TCP connection creating an
 // ObjectID for the file and then WriteTickets for each byte region.
 // When it has written all the bytes sent, it will reply with the 8 Byte
 // ObjectID it has assigned.
-func routerCreateObject(c net.Conn, client WriteNodeClient) error {
+func routerCreateObject(c net.Conn) error {
 	defer c.Close()
 
 	// Specific header prefix for Delete requests which are handled synchronously
@@ -189,10 +91,10 @@ func routerCreateObject(c net.Conn, client WriteNodeClient) error {
 		}
 
 		fmt.Printf("Handling a delete request for objectID: %s\n", string(objectIDBuf))
+
 		// DeleteTicketHandler
 		tickets, err := DeleteObject(
 			string(objectIDBuf),
-			client,
 		)
 		if err != nil {
 			fmt.Printf("Failed to delete %s: %v\n", string(objectIDBuf), err)
@@ -211,10 +113,6 @@ func routerCreateObject(c net.Conn, client WriteNodeClient) error {
 
 	// Grant a new ObjectID for this TCP connection / file
 	objectID := NextObjectID()
-	// coRequest := &CreateObjectRequest{
-	// 	ContentLength: contentLength,
-	// 	ObjectID:      objectID,
-	// }
 
 	fmt.Printf("Handling router connection for %d-byte Object: %s\n", contentLength, string(objectID))
 
@@ -273,9 +171,20 @@ func routerCreateObject(c net.Conn, client WriteNodeClient) error {
 		// Counter of Tickets assigned to the Object
 		_, err := TouchTicketCounter(writeRequest.ObjectId)
 
+		// TODO: Should use service lookup to find nodes
+		// during each segment
+		fmt.Println("Creating nodeClient")
+		nodeClient, err := NewClient("127.0.0.1:5002")
+		fmt.Println("Created nodeClient")
+		if err != nil {
+			fmt.Printf("Unable to create NodeClient: %v\n", err)
+			return err
+		}
+		defer nodeClient.Close()
+
 		// Write the data to some node
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		response, err := client.Write(ctx, &writeRequest)
+		response, err := nodeClient.Write(ctx, &writeRequest)
 		defer cancel()
 		fmt.Printf("TicketWriteResponse for %s of %s: %d\n", response.TicketId, response.ObjectId, response.Status)
 		if err != nil {
