@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+option go_package = "github.com/mrmod/data-putter/dataputter";
+
+service Router {
+    rpc CreateObject(CreateObjectRequest) returns (ObjectActionResponse) {}
+    rpc DeleteObject(DeleteObjectRequest) returns (ObjectActionResponse) {}
+}
+
+message CreateObjectRequest {
+    int64 content_length = 1;
+    string object_id = 2;
+    bytes data = 3;
+}
+
+message DeleteObjectRequest {
+    string object_id = 1;
+}
+
+message ObjectActionResponse {
+    int32 status = 1;      // 0 = OK, 1 = Failed, 2 = NotExist
+    string object_id = 2;
+}
+
+// WriteNode is the new name for DataPutter to keeps things simple
+service WriteNode {
+    rpc Write(NodeWriteRequest) returns (NodeResponse) {}
+    rpc Delete(NodeDeleteRequest) returns (NodeResponse) {}
+    rpc Read(NodeReadRequest) returns (NodeResponse) {}
+}
+
+message NodeReadRequest {
+    string object_id = 1;
+    string ticket_id = 2;
+    string node_id = 3;
+    string token = 4;
+}
+
+message NodeWriteRequest {
+    int64 byte_start = 1;
+    int64 byte_end = 2;
+    int64 byte_count = 3;
+    string object_id = 4;
+    string ticket_id = 5;
+    string token = 6;
+    bytes data = 7;
+}
+
+message NodeDeleteRequest {
+    string object_id = 1;
+    string ticket_id = 2;
+    string node_id = 3;
+    string token = 4;
+}
+
+message NodeResponse {
+    int32 status = 1;      // 0 = OK, 1 = Failed, 2 = NotExist, 3 = NotAuthorized
+    int64 byte_start = 2;
+    int64 byte_end = 3;
+    int64 byte_count = 4;
+    string object_id = 5;
+    string ticket_id = 6;
+    string node_id = 7;
+    bytes data = 9; 
+}
