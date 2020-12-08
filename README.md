@@ -18,6 +18,23 @@ Simple Object Store consists of a WriteNode, Router, and Datastore.
 * Each chunk is sent to a **WriteNode** to store
 * When all chunks are stored, the file has been "Received"
 
+## Configuration
+
+YAML can be used to provide a topology configuration to a Router.
+
+```
+# router.yaml
+
+port: 5001
+bind: 0.0.0.0
+
+nodes:
+  - host: hostA
+    port: 5002
+  - host: hostB
+    port: 5002
+```
+
 ### Roles and Ports
 
 ```

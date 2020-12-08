@@ -28,17 +28,35 @@ func main() {
 	// Byte Putter Router server
 	case "router", "singleNode", "standAlone":
 
-		// Node services which register should be stored somewhere
-		nodeService := dataputter.NewWriteNodeService("127.0.0.1", "5002")
-		go nodeService.Serve()
+		config, err := dataputter.LoadRouterConfig()
+		if err != nil {
+			if err == dataputter.ErrNoConfig {
+				fmt.Printf("No configuration present, using default")
+				config = dataputter.DefaultRouterConfig
+			} else {
+				fmt.Printf("Unexpected error loading configuration: %v\n", err)
+				return
+			}
+		}
+
+		for _, nodeConfig := range config.Nodes {
+			// Node services which register should be stored somewhere
+			fmt.Printf("Started node on %s\n", nodeConfig)
+			nodeService := dataputter.NewWriteNodeService(
+				nodeConfig.Host,
+				nodeConfig.Port,
+			)
+			go nodeService.Serve()
+		}
+		fmt.Printf("Started %d Write Nodes\n", len(config.Nodes))
 
 		// Listin for object read requests [Router]
 		fmt.Printf("Starting read server on 5004\n")
 		go dataputter.ObjectServer(5004)
 
 		// Listen for inbound files [Router]
-		fmt.Printf("Starting router on 5001\n")
-		dataputter.RunRouterServer(5001)
+		fmt.Printf("Starting router on %d\n", config.Port)
+		dataputter.RunRouterServer(config.Port)
 
 	// DataPutter Node
 	case "putter":
