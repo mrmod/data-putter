@@ -1,7 +1,7 @@
 package dataputter
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -30,7 +30,7 @@ func ObjectPathString(objectID string) string {
 // of data in the tail'th node of the path components
 func CreateObjectPath(objectID string) error {
 	filepath := ObjectPathString(objectID)
-	fmt.Printf("CreateObjectPath: %s :%#v:\n", filepath, filepath)
+	log.Printf("CreateObjectPath: %s :%#v:\n", filepath, filepath)
 	if strings.Contains(filepath, string(os.PathSeparator)) {
 		return os.MkdirAll(filepath, 0755)
 	}

@@ -2,6 +2,7 @@ package dataputter
 
 import (
 	"fmt"
+	"log"
 )
 
 const (
@@ -13,7 +14,7 @@ const (
 func NextTicketID() []byte {
 	v, err := touchCounter(ticketIDCounterKey)
 	if err != nil {
-		fmt.Printf("Unable to get objectID from %s: %v\n",
+		log.Printf("Unable to get objectID from %s: %v\n",
 			objectIDCounterKey, err,
 		)
 		return []byte{}
@@ -27,7 +28,7 @@ func NextTicketID() []byte {
 func NextObjectID() []byte {
 	v, err := touchCounter(objectIDCounterKey)
 	if err != nil {
-		fmt.Printf("Unable to get objectID from %s: %v\n",
+		log.Printf("Unable to get objectID from %s: %v\n",
 			objectIDCounterKey, err,
 		)
 		return []byte{}

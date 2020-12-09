@@ -28,6 +28,7 @@ package dataputter
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
@@ -83,7 +84,7 @@ func init() {
 	}
 	c, err := redis.NewPool("tcp", endpoints[0], 10)
 	if err != nil {
-		fmt.Printf("Unable to establish Redis connection: %v\n", err)
+		log.Printf("Unable to establish Redis connection: %v\n", err)
 		return
 	}
 	fmt.Println("Created Redis connection")
@@ -99,7 +100,7 @@ func writeString(keyPath, value string) error {
 }
 
 func getKey(keyPath string) (string, error) {
-	fmt.Printf("GetKey: %s ::%#v::\n", keyPath, keyPath)
+	log.Printf("GetKey: %s ::%#v::\n", keyPath, keyPath)
 	var value string
 	err := client.Do(
 		redis.Cmd(&value, "GET", keyPath),
@@ -169,10 +170,10 @@ type CounterEvent struct {
 
 // Watches a key for Version updates
 func WatchCounter(keyPath string, observers chan CounterEvent) error {
-	fmt.Printf("WatchCounter starting for %s\n", keyPath)
+	log.Printf("WatchCounter starting for %s\n", keyPath)
 
 	if v, err := getCounter(keyPath); err != nil {
-		fmt.Printf("Unable to get counter %s\n", keyPath)
+		log.Printf("Unable to get counter %s\n", keyPath)
 		return err
 	} else {
 		observers <- CounterEvent{keyPath, v}
@@ -229,7 +230,7 @@ func CreateObject(objectID, ticketID string) error {
 
 	err = client.Do(redis.Cmd(nil, "SADD", "objects", objectID))
 	if err != nil {
-		fmt.Printf("Unable to add %s to set of objects: %v", objectID, err)
+		log.Printf("Unable to add %s to set of objects: %v", objectID, err)
 	}
 
 	err = writeString(basePath+"status", TicketStatus[TicketNew])
@@ -254,7 +255,7 @@ func SetObjectStatus(objectID, status string) error {
 
 // Sets a new ticket status
 func SetTicketStatus(ticketID, status string) error {
-	fmt.Printf("SetTicketStatus of %s to %s\n", ticketID, status)
+	log.Printf("SetTicketStatus of %s to %s\n", ticketID, status)
 	keyPath := "/tickets/" + ticketID + "/status"
 
 	return writeString(
@@ -265,7 +266,7 @@ func SetTicketStatus(ticketID, status string) error {
 
 // Get a list of tickets for in the inclusive range from offset to minByt + 512KB
 func GetTicketsFromOffset(objectID string, offset int64) (tickets []string, err error) {
-	fmt.Printf("GetTicketFromOffset %d %s\n", offset, objectID)
+	log.Printf("GetTicketFromOffset %d %s\n", offset, objectID)
 	err = client.Do(
 		redis.Cmd(
 			&tickets,
@@ -295,7 +296,7 @@ func GetTicketsFromOffset(objectID string, offset int64) (tickets []string, err 
 // Adds node to set of nodes containing tickets: objectNodes/$objectID { nodeID }
 func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCount int64) error {
 	var err error
-	fmt.Printf("[%d:%d] CreateTicket %s for object %s\n", byteStart, byteEnd, ticketID, objectID)
+	log.Printf("[%d:%d] CreateTicket %s for object %s\n", byteStart, byteEnd, ticketID, objectID)
 	basePath := "/tickets/" + ticketID + "/"
 
 	// /tickets/$TICKET_ID/ticket = TICKET_ID
@@ -340,13 +341,13 @@ func CreateTicket(ticketID, objectID, nodeID string, byteStart, byteEnd, byteCou
 	// Track which tickets an object has
 	err = client.Do(redis.Cmd(nil, "SADD", "objectTickets/"+objectID, ticketID))
 	if err != nil {
-		fmt.Printf("Unable to add %s to set of objects: %v", objectID, err)
+		log.Printf("Unable to add %s to set of objects: %v", objectID, err)
 	}
 
 	// Track which nodes have tickets for an object
 	err = client.Do(redis.Cmd(nil, "SADD", "objectNodes/"+objectID, nodeID))
 	if err != nil {
-		fmt.Printf("Unable to add %s to set of objects: %v", objectID, err)
+		log.Printf("Unable to add %s to set of objects: %v", objectID, err)
 	}
 
 	// SetTicketStatus(ticketID, TicketStatus[TicketNew])
@@ -416,29 +417,29 @@ func GetTicketMetadata(ticketID string) (Ticket, error) {
 	for field, path := range intKeys {
 		var v int64
 		if err := client.Do(redis.Cmd(&v, "get", path)); err != nil {
-			fmt.Printf("Error getting %s: %v\n", path, err)
+			log.Printf("Error getting %s: %v\n", path, err)
 			return ticket, err
 		}
-		fmt.Printf("TicketMetadata: %s = %d\n", path, v)
+		log.Printf("TicketMetadata: %s = %d\n", path, v)
 		if ticketValue.FieldByName(field).CanSet() {
 			ticketValue.FieldByName(field).SetInt(v)
 		} else {
-			fmt.Printf("Unable to set field %s\n", field)
+			log.Printf("Unable to set field %s\n", field)
 		}
 	}
 
 	for field, path := range stringKeys {
 		var v string
 		if err := client.Do(redis.Cmd(&v, "get", path)); err != nil {
-			fmt.Printf("Error getting %s: %v\n", path, err)
+			log.Printf("Error getting %s: %v\n", path, err)
 			return ticket, err
 		}
-		fmt.Printf("TicketMetadata: %s = %v\n", path, v)
+		log.Printf("TicketMetadata: %s = %v\n", path, v)
 
 		if ticketValue.FieldByName(field).CanSet() {
 			ticketValue.FieldByName(field).SetString(v)
 		} else {
-			fmt.Printf("Unable to set field %s\n", field)
+			log.Printf("Unable to set field %s\n", field)
 		}
 	}
 
@@ -453,7 +454,7 @@ func DeleteTicket(objectID, ticketID string) error {
 	if status != "saved" && status != "" {
 		return fmt.Errorf("Denying access to ticket %s in state %s\n", ticketID, status)
 	}
-	fmt.Printf("Deleting %s/%s with status %s\n", objectID, ticketID, status)
+	log.Printf("Deleting %s/%s with status %s\n", objectID, ticketID, status)
 	// Remove ticket from set of object tickets
 	keyPath := "objectTickets/" + objectID
 
@@ -475,16 +476,16 @@ func DeleteTicket(objectID, ticketID string) error {
 	}
 	for _, path := range keyPaths {
 		if err := client.Do(redis.Cmd(nil, "del", path)); err != nil {
-			fmt.Printf("Failed to delete %s: %v\n", path, err)
+			log.Printf("Failed to delete %s: %v\n", path, err)
 			return err
 		}
-		fmt.Printf("Deleted %s\n", path)
+		log.Printf("Deleted %s\n", path)
 	}
 	return err
 }
 
 func DeleteObjectReference(objectID string) error {
-	fmt.Printf("DeleteObjectReference %s\n", objectID)
+	log.Printf("DeleteObjectReference %s\n", objectID)
 	keyPaths := []string{
 		// Delete set of tickets associated with the object
 		"objectTickets/" + objectID,
@@ -500,10 +501,10 @@ func DeleteObjectReference(objectID string) error {
 
 	for _, keyPath := range keyPaths {
 		if err := client.Do(redis.Cmd(nil, "del", keyPath)); err != nil {
-			fmt.Printf("Failed to delete %s: %v\n", keyPath, err)
+			log.Printf("Failed to delete %s: %v\n", keyPath, err)
 			return err
 		}
-		fmt.Printf("Deleted %s\n", keyPath)
+		log.Printf("Deleted %s\n", keyPath)
 	}
 
 	// Finally, delete the object from the set of objects
