@@ -7,6 +7,7 @@ package dataputter
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -40,7 +41,7 @@ func putBytes(filename string, bytes []byte) error {
 func deleteBytes(filename string) error {
 	_, err := os.Stat(filename)
 	if os.IsNotExist(err) {
-		fmt.Printf("%s does not exist: %v\n", filename, err)
+		log.Printf("%s does not exist: %v\n", filename, err)
 		return err
 	}
 	return os.Remove(filename)
@@ -57,7 +58,7 @@ func sendTCPSimple(hostPort string, data []byte) error {
 		return err
 	}
 
-	fmt.Printf("Wrote %d byte response to %s\n", n, hostPort)
+	log.Printf("Wrote %d byte response to %s\n", n, hostPort)
 	return nil
 }
 
@@ -78,9 +79,9 @@ func SendPutResponse(hostPort string, ticketID []byte, statusCode int) error {
 	}
 
 	response := append(ticketID, byte(statusCode))
-	fmt.Printf("PutterNode: Created %d-byte response using:\n", len(response))
-	fmt.Printf("\t%d bytes for TicketID\n", len(ticketID))
-	fmt.Printf("\t%d bytes for StatusCode\n", len([]byte{byte(statusCode)}))
+	log.Printf("PutterNode: Created %d-byte response using:\n", len(response))
+	log.Printf("\t%d bytes for TicketID\n", len(ticketID))
+	log.Printf("\t%d bytes for StatusCode\n", len([]byte{byte(statusCode)}))
 	return sendTCPSimple(
 		fmt.Sprintf("%s:%s", host, port),
 		response,
@@ -92,7 +93,7 @@ func ServeTicketBytes(c net.Conn, client WriteNodeClient) error {
 	ticketIDBytes := make([]byte, 8)
 
 	if l, err := c.Read(ticketIDBytes); err != nil || l != 8 {
-		fmt.Printf("Failed to get ticketID from %d bytes: %v\n", l, err)
+		log.Printf("Failed to get ticketID from %d bytes: %v\n", l, err)
 		return err
 	}
 
@@ -100,14 +101,14 @@ func ServeTicketBytes(c net.Conn, client WriteNodeClient) error {
 	readRequest := &NodeReadRequest{
 		TicketId: ticketID,
 	}
-	fmt.Printf("ServeTicketBytes for %s\n", ticketID)
+	log.Printf("ServeTicketBytes for %s\n", ticketID)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 
 	response, err := client.Read(ctx, readRequest)
 	defer cancel()
 
 	if response.Status != 0 {
-		fmt.Printf("Failed to read ticket %s\n", response.TicketId)
+		log.Printf("Failed to read ticket %s\n", response.TicketId)
 	}
 	return err
 }
@@ -132,11 +133,11 @@ func DeleteObjectReferences(objectID, ticketID string) (Ticket, error) {
 	}
 
 	if remainingTickets > 0 {
-		fmt.Printf("%d more tickets remain for %s\n", remainingTickets, objectID)
+		log.Printf("%d more tickets remain for %s\n", remainingTickets, objectID)
 		return ticket, nil
 	}
 
-	fmt.Printf("All tickets referenced by %s have been deleted\n", objectID)
+	log.Printf("All tickets referenced by %s have been deleted\n", objectID)
 	return ticket, DeleteObjectReference(objectID)
 }
 
@@ -150,7 +151,7 @@ func DeleteObject(objectID string) ([]Ticket, error) {
 	deletedTickets := []Ticket{}
 
 	if err != nil {
-		fmt.Printf("Delete object failed to get tickets for %s: %v\n", objectID, err)
+		log.Printf("Delete object failed to get tickets for %s: %v\n", objectID, err)
 		return deletedTickets, err
 	}
 	// Remove the bytes from disk
@@ -160,7 +161,7 @@ func DeleteObject(objectID string) ([]Ticket, error) {
 		if err != nil {
 			return deletedTickets, fmt.Errorf("Unable to find node for ticket %s: %v\n", ticketID, err)
 		} else {
-			fmt.Printf("DEBUG: deleting ticket [%d/%d] %s from node %s\n",
+			log.Printf("DEBUG: deleting ticket [%d/%d] %s from node %s\n",
 				ticketIndex, len(tickets), ticketID, nodeID,
 			)
 		}
@@ -176,7 +177,7 @@ func DeleteObject(objectID string) ([]Ticket, error) {
 		nodeClient, err := NewClient("127.0.0.1:5002")
 		fmt.Println("Created nodeClient")
 		if err != nil {
-			fmt.Printf("Unable to create NodeClient: %v\n", err)
+			log.Printf("Unable to create NodeClient: %v\n", err)
 			return deletedTickets, err
 		}
 		defer nodeClient.Close()
@@ -187,7 +188,7 @@ func DeleteObject(objectID string) ([]Ticket, error) {
 		defer cancel()
 
 		if err != nil || res.Status != 0 {
-			fmt.Printf("Error deleting ticket bytes for %s of %s: %v\n",
+			log.Printf("Error deleting ticket bytes for %s of %s: %v\n",
 				deleteRequest.TicketId,
 				deleteRequest.ObjectId,
 				err)

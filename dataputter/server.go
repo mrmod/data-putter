@@ -6,17 +6,18 @@ package dataputter
 
 import (
 	"fmt"
+	"log"
 	"net"
 )
 
 // WriteTicketHandler Receives WriteTickets and writes them serially to disk
 func WriteTicketHandler(work chan WriteTicket) {
 	for wt := range work {
-		fmt.Printf("Received %d bytes of work: %s\n", len(wt.Data), string(wt.TicketID))
+		log.Printf("Received %d bytes of work: %s\n", len(wt.Data), string(wt.TicketID))
 		// Write to disk
 		err := StoreBytes(wt)
 		if err != nil {
-			fmt.Printf("Error writing ticket %s with %d bytes of data: %v\n",
+			log.Printf("Error writing ticket %s with %d bytes of data: %v\n",
 				string(wt.TicketID), len(wt.Data), err)
 		}
 	}
@@ -42,13 +43,13 @@ func handleConnection(c net.Conn, intake chan WriteTicket) {
 	if n < 16 {
 		err = fmt.Errorf("Too few bytes %d", n)
 	}
-	fmt.Printf("Read %d byte WriteTicket\n", n)
+	log.Printf("Read %d byte WriteTicket\n", n)
 	if err != nil {
-		fmt.Printf("Error reading from connection: %v\n", err)
+		log.Printf("Error reading from connection: %v\n", err)
 	} else {
-		fmt.Printf("Read %d Bytes: %v\n", n, string(ticketRequest))
+		log.Printf("Read %d Bytes: %v\n", n, string(ticketRequest))
 		writeTicket := parseTicketRequest(ticketRequest)
-		fmt.Printf("Ticket: %s\n", writeTicket)
+		log.Printf("Ticket: %s\n", writeTicket)
 		intake <- writeTicket
 	}
 }
@@ -59,11 +60,11 @@ func CreateServer(port string, intake chan WriteTicket) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Server up on port %s\n", port)
+	log.Printf("Server up on port %s\n", port)
 	for {
 		conn, err := s.Accept()
 		if err != nil {
-			fmt.Printf("Error in connection: %v\n", err)
+			log.Printf("Error in connection: %v\n", err)
 			continue
 		}
 		go handleConnection(conn, intake)

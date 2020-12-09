@@ -15,6 +15,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -44,11 +45,11 @@ func RunRouterServer(port int) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("PutterRouter running on port %d\n", port)
+	log.Printf("PutterRouter running on port %d\n", port)
 	for {
 		conn, err := s.Accept()
 		if err != nil {
-			fmt.Printf("Error in connection: %v\n", err)
+			log.Printf("Error in connection: %v\n", err)
 			continue
 		}
 		// Handle a request to store a file/bunch-of-bytes somewhere
@@ -71,39 +72,39 @@ func routerCreateObject(c net.Conn) error {
 	// ContentLength must be bigEndian
 	contentLenBuf := make([]byte, 8)
 	if _, err := c.Read(contentLenBuf); err != nil {
-		fmt.Printf("Unable to get the content length for request %s\n", err)
-		fmt.Printf("\tReceived: %s\n", string(contentLenBuf))
+		log.Printf("Unable to get the content length for request %s\n", err)
+		log.Printf("\tReceived: %s\n", string(contentLenBuf))
 		return err
 	}
-	// fmt.Printf("Read contentLen as %s\n", string(contentLenBuf))
+	// log.Printf("Read contentLen as %s\n", string(contentLenBuf))
 
 	// Delete an object
 	// [8B Delete Header][8B ObjectID][16B PSK / Authenticity Token]
 	if string(contentLenBuf) == string(deleteRequestHeader) {
-		fmt.Printf("Handling delete request\n")
+		log.Printf("Handling delete request\n")
 		defer c.Close()
 		objectIDBuf := make([]byte, 8)
 		_, err := c.Read(objectIDBuf)
 		if err != nil {
-			fmt.Printf("Unable to read delete request objectID: %v\n", err)
+			log.Printf("Unable to read delete request objectID: %v\n", err)
 			c.Write([]byte("_FAILED_"))
 			return err
 		}
 
-		fmt.Printf("Handling a delete request for objectID: %s\n", string(objectIDBuf))
+		log.Printf("Handling a delete request for objectID: %s\n", string(objectIDBuf))
 
 		// DeleteTicketHandler
 		tickets, err := DeleteObject(
 			string(objectIDBuf),
 		)
 		if err != nil {
-			fmt.Printf("Failed to delete %s: %v\n", string(objectIDBuf), err)
+			log.Printf("Failed to delete %s: %v\n", string(objectIDBuf), err)
 			c.Write([]byte("_FAILED_"))
 			return err
 		}
 		c.Write(objectIDBuf)
 		for _, ticket := range tickets {
-			fmt.Printf("Deleted %s\n", ticket)
+			log.Printf("Deleted %s\n", ticket)
 		}
 		return nil
 	}
@@ -114,9 +115,9 @@ func routerCreateObject(c net.Conn) error {
 	// Grant a new ObjectID for this TCP connection / file
 	objectID := NextObjectID()
 
-	fmt.Printf("Handling router connection for %d-byte Object: %s\n", contentLength, string(objectID))
+	log.Printf("Handling router connection for %d-byte Object: %s\n", contentLength, string(objectID))
 
-	fmt.Printf("Opening %d bytes of content from Object %s\n", contentLength, string(objectID))
+	log.Printf("Opening %d bytes of content from Object %s\n", contentLength, string(objectID))
 	var n int
 	var err error
 	var objBytesCnt = int64(0)
@@ -129,19 +130,19 @@ func routerCreateObject(c net.Conn) error {
 
 	// Write regions of bytes for this object
 	for {
-		fmt.Printf("-- -- --\n")
+		log.Printf("-- -- --\n")
 		dataStream := make([]byte, 1450)
 		ticketID := NextTicketID()
-		fmt.Printf("Trying to read bytes from Object %s stream\n", string(objectID))
+		log.Printf("Trying to read bytes from Object %s stream\n", string(objectID))
 		n, err = c.Read(dataStream)
-		fmt.Printf("\tRead %d bytes from Object %s stream\n", n, string(objectID))
+		log.Printf("\tRead %d bytes from Object %s stream\n", n, string(objectID))
 		if err != nil && err != io.EOF {
-			fmt.Printf("Error reading bytes from %d onward: %v\n", objBytesCnt, err)
+			log.Printf("Error reading bytes from %d onward: %v\n", objBytesCnt, err)
 			return err
 		}
 
 		if err == io.EOF {
-			fmt.Printf("\tEOF Read %d bytes of object %s\n", objBytesCnt, string(objectID))
+			log.Printf("\tEOF Read %d bytes of object %s\n", objBytesCnt, string(objectID))
 			break
 		}
 
@@ -157,14 +158,14 @@ func routerCreateObject(c net.Conn) error {
 
 		// Create a new object
 		if err := CreateObject(writeRequest.ObjectId, writeRequest.TicketId); err != nil {
-			fmt.Printf("Unable to create Object %s: %v\n", writeRequest.ObjectId, err)
+			log.Printf("Unable to create Object %s: %v\n", writeRequest.ObjectId, err)
 			return err
 		}
 
 		// Set the object status to Writing
 		err = SetObjectStatus(writeRequest.ObjectId, ObjectStatus[ObjectWriting])
 		if err != nil {
-			fmt.Printf("Unable to put object in Writing status: %v\n", err)
+			log.Printf("Unable to put object in Writing status: %v\n", err)
 			return err
 		}
 
@@ -177,7 +178,7 @@ func routerCreateObject(c net.Conn) error {
 		nodeClient, err := NewClient("127.0.0.1:5002")
 		fmt.Println("Created nodeClient")
 		if err != nil {
-			fmt.Printf("Unable to create NodeClient: %v\n", err)
+			log.Printf("Unable to create NodeClient: %v\n", err)
 			return err
 		}
 		defer nodeClient.Close()
@@ -186,16 +187,16 @@ func routerCreateObject(c net.Conn) error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		response, err := nodeClient.Write(ctx, &writeRequest)
 		defer cancel()
-		fmt.Printf("TicketWriteResponse for %s of %s: %d\n", response.TicketId, response.ObjectId, response.Status)
+		log.Printf("TicketWriteResponse for %s of %s: %d\n", response.TicketId, response.ObjectId, response.Status)
 		if err != nil {
-			fmt.Printf("Error writing ticket %s of %s to NodeWriter: %v\n",
+			log.Printf("Error writing ticket %s of %s to NodeWriter: %v\n",
 				writeRequest.TicketId,
 				writeRequest.ObjectId,
 				err)
 
 		}
 		if response.Status != 0 {
-			fmt.Printf("Error writing ticket %s of %s, got status %d\n",
+			log.Printf("Error writing ticket %s of %s, got status %d\n",
 				writeRequest.TicketId,
 				writeRequest.ObjectId,
 				response.Status)
@@ -204,18 +205,18 @@ func routerCreateObject(c net.Conn) error {
 		// Create the ticket in the datastore on the response
 		err = CreateTicket(response.TicketId, response.ObjectId, response.NodeId, response.ByteStart, response.ByteEnd, response.ByteCount)
 		if err != nil {
-			fmt.Printf("Unable to save ticket to datastore: %v\n", err)
+			log.Printf("Unable to save ticket to datastore: %v\n", err)
 			return err
 		}
 		objBytesCnt += int64(n)
-		fmt.Printf("[%d/%d] Read %d of %d bytes\n", objBytesCnt, contentLength, n, contentLength)
+		log.Printf("[%d/%d] Read %d of %d bytes\n", objBytesCnt, contentLength, n, contentLength)
 		_, err = TouchWriteCounter(response.ObjectId)
 		if err != nil {
-			fmt.Printf("Unable to update write counter of object %s: %v\n", response.ObjectId, err)
+			log.Printf("Unable to update write counter of object %s: %v\n", response.ObjectId, err)
 			return err
 		}
 		if objBytesCnt == contentLength {
-			fmt.Printf("\tRead all %d bytes of %d for Object %s\n",
+			log.Printf("\tRead all %d bytes of %d for Object %s\n",
 				objBytesCnt,
 				contentLength,
 				writeRequest.ObjectId,
@@ -225,35 +226,35 @@ func routerCreateObject(c net.Conn) error {
 	}
 	// At this point we have access to the length of the object in bytes
 	// Wait for the file to be written
-	fmt.Printf("Waiting for Object %s to be written\n", string(objectID))
+	log.Printf("Waiting for Object %s to be written\n", string(objectID))
 	go spinWhileObjectWriting(string(objectID), writeWaiters, &writeInProgress)
 	go WatchCounter("/objects/"+string(objectID)+"/writeCounter", writeWaiters)
-	fmt.Printf("Waiting for WatchCounter to release inProgress for %s\n", string(objectID))
+	log.Printf("Waiting for WatchCounter to release inProgress for %s\n", string(objectID))
 	writeInProgress.Wait()
 	// close(writeWaiters)
 	SetObjectByteSize(string(objectID), objBytesCnt)
-	fmt.Printf("Persisted all %d bytes of Object %s\n", objBytesCnt, string(objectID))
+	log.Printf("Persisted all %d bytes of Object %s\n", objBytesCnt, string(objectID))
 
 	// Send the created objectID to the client
 	n, err = c.Write(objectID)
 	if err != nil {
-		fmt.Printf("Failed to notify client [%d]objectID %s was committed successfully\n", n, objectID)
+		log.Printf("Failed to notify client [%d]objectID %s was committed successfully\n", n, objectID)
 		return err
 	}
-	fmt.Printf("OK %d byte of [%d]objectID %s write committed\n", objBytesCnt, n, objectID)
+	log.Printf("OK %d byte of [%d]objectID %s write committed\n", objBytesCnt, n, objectID)
 
 	return c.Close()
 }
 
 func spinWhileObjectWriting(objectID string, countEvents chan CounterEvent, wg *sync.WaitGroup) {
 
-	fmt.Printf("Wait on object write to complete")
+	log.Printf("Wait on object write to complete")
 	for countEvent := range countEvents {
 		writeCounter, wcErr := GetWriteCounterValue(objectID)
 		ticketCounter, tcErr := GetTicketCounterValue(objectID)
 
 		if wcErr == nil && tcErr == nil {
-			fmt.Printf("Comparing T: %d with W %d vs CE %s :: %d\n",
+			log.Printf("Comparing T: %d with W %d vs CE %s :: %d\n",
 				ticketCounter,
 				writeCounter,
 				countEvent.KeyPath,
@@ -264,7 +265,7 @@ func spinWhileObjectWriting(objectID string, countEvents chan CounterEvent, wg *
 				return
 			}
 		} else {
-			fmt.Printf("Counter event errors; %v and %v\n", wcErr, tcErr)
+			log.Printf("Counter event errors; %v and %v\n", wcErr, tcErr)
 		}
 	}
 }

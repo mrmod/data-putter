@@ -9,6 +9,7 @@ package dataputter
 
 import (
 	"fmt"
+	"log"
 	"net"
 )
 
@@ -41,10 +42,10 @@ func PutToTarget(wt WriteTicket, putter Node) (WriteTicket, error) {
 	if err != nil {
 		return wt, err
 	}
-	fmt.Printf("Sent %d byte TicketID\n", n)
+	log.Printf("Sent %d byte TicketID\n", n)
 
 	n, err = c.Write(wt.Checksum)
-	fmt.Printf("Sent %d byte Checksum\n", n)
+	log.Printf("Sent %d byte Checksum\n", n)
 	if err != nil {
 		return wt, err
 	}
@@ -53,6 +54,6 @@ func PutToTarget(wt WriteTicket, putter Node) (WriteTicket, error) {
 	if err != nil {
 		return wt, err
 	}
-	fmt.Printf("Sent %d bytes of data\n", n)
+	log.Printf("Sent %d bytes of data\n", n)
 	return wt, nil
 }
