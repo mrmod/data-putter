@@ -17,31 +17,31 @@ import (
 // StandAlone Operational mode for playing around on a local machine
 func StandAlone(config dataputter.RouterConfig) {
 	for _, nodeConfig := range config.Nodes {
-		StartWriteNode(nodeConfig.Host, nodeConfig.Port)
+		go StartWriteNode(nodeConfig.Host, nodeConfig.Port)
 	}
 	fmt.Printf("Started %d Write Nodes\n", len(config.Nodes))
 	// Listen for inbound files [Router]
-	StartReadServer(5004)
-	StartRouter(config.Port)
+	go StartReadServer(5004)
+	StartRouter(config)
 
 }
 
 // StartWriteNode On this machine
 func StartWriteNode(bind string, port int) {
 	nodeService := dataputter.NewWriteNodeService(bind, port)
-	go nodeService.Serve()
+	nodeService.Serve()
 }
 
 // StartReadServer On this machine to listen for read requests
 func StartReadServer(port int) {
 	fmt.Printf("Starting read server on %d\n", port)
-	go dataputter.ObjectServer(port)
+	dataputter.ObjectServer(port)
 }
 
 // StartRouter On this machine
-func StartRouter(port int) {
-	fmt.Printf("Starting router on %d\n", port)
-	dataputter.RunRouterServer(port)
+func StartRouter(config dataputter.RouterConfig) {
+	fmt.Printf("Starting router on %d\n", config.Port)
+	dataputter.RunRouterServer(config)
 }
 func showUsage() {
 	fmt.Println("USAGE: app [router|writeNode|standAlone]")
@@ -66,12 +66,13 @@ func main() {
 			return
 		}
 	}
+	fmt.Printf("Starting in %s mode\n", startupMode)
 	switch startupMode {
 	case "standAlone":
 		StandAlone(config)
 	case "router":
-		StartRouter(config.Port)
-		StartReadServer(5004)
+		go StartReadServer(5004)
+		StartRouter(config)
 	case "writeNode":
 		StartWriteNode("0.0.0.0", 5002)
 	default:
