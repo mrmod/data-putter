@@ -31,6 +31,7 @@ const (
 
 type routerServer struct {
 	UnimplementedRouterServer
+	Config RouterConfig
 }
 
 func (s *routerServer) CreateObject(ctx context.Context, req *CreateObjectRequest) (*ObjectActionResponse, error) {
@@ -39,8 +40,11 @@ func (s *routerServer) CreateObject(ctx context.Context, req *CreateObjectReques
 
 // RouterServer Listens for bytes and creates WriteTickets which are
 // sent to the putterRequests channel for DataPutter Nodes to write
-func RunRouterServer(port int) error {
-	// rpcServer := RegisterRouterServer(rpcServer, &routerServer{})
+func RunRouterServer(config RouterConfig) error {
+	port := config.Port
+
+	// rpcServer := RegisterRouterServer(rpcServer, &RouterServer{})
+
 	s, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return err
@@ -53,7 +57,7 @@ func RunRouterServer(port int) error {
 			continue
 		}
 		// Handle a request to store a file/bunch-of-bytes somewhere
-		go routerCreateObject(conn)
+		go DoCreateObject(conn, config)
 	}
 }
 
@@ -61,7 +65,7 @@ func RunRouterServer(port int) error {
 // ObjectID for the file and then WriteTickets for each byte region.
 // When it has written all the bytes sent, it will reply with the 8 Byte
 // ObjectID it has assigned.
-func routerCreateObject(c net.Conn) error {
+func DoCreateObject(c net.Conn, config RouterConfig) error {
 	defer c.Close()
 
 	// Specific header prefix for Delete requests which are handled synchronously
@@ -109,7 +113,6 @@ func routerCreateObject(c net.Conn) error {
 		return nil
 	}
 
-	// err := binary.Read(contentLenBuf, binary.BigEndian, &contentLength)
 	contentLength := int64(binary.BigEndian.Uint64(contentLenBuf))
 
 	// Grant a new ObjectID for this TCP connection / file
@@ -129,6 +132,7 @@ func routerCreateObject(c net.Conn) error {
 	writeWaiters := make(chan CounterEvent, 2)
 
 	// Write regions of bytes for this object
+	nodeIndex := 0
 	for {
 		log.Printf("-- -- --\n")
 		dataStream := make([]byte, 1450)
@@ -174,8 +178,10 @@ func routerCreateObject(c net.Conn) error {
 
 		// TODO: Should use service lookup to find nodes
 		// during each segment
+		nodeConfig := config.Nodes[nodeIndex]
+		nodeAddress := fmt.Sprintf("%s:%d", nodeConfig.Host, nodeConfig.Port)
 		fmt.Println("Creating nodeClient")
-		nodeClient, err := NewClient("127.0.0.1:5002")
+		nodeClient, err := NewClient(nodeAddress)
 		fmt.Println("Created nodeClient")
 		if err != nil {
 			log.Printf("Unable to create NodeClient: %v\n", err)
@@ -195,6 +201,13 @@ func routerCreateObject(c net.Conn) error {
 				err)
 
 		}
+		// Use the next node for the next ticket
+		if nodeIndex < len(config.Nodes)-1 {
+			nodeIndex++
+		} else {
+			nodeIndex = 0
+		}
+
 		if response.Status != 0 {
 			log.Printf("Error writing ticket %s of %s, got status %d\n",
 				writeRequest.TicketId,

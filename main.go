@@ -14,82 +14,69 @@ import (
 	"github.com/mrmod/data-putter/dataputter"
 )
 
+// StandAlone Operational mode for playing around on a local machine
+func StandAlone(config dataputter.RouterConfig) {
+	for _, nodeConfig := range config.Nodes {
+		go StartWriteNode(nodeConfig.Host, nodeConfig.Port)
+	}
+	fmt.Printf("Started %d Write Nodes\n", len(config.Nodes))
+	// Listen for inbound files [Router]
+	go StartReadServer(5004)
+	StartRouter(config)
+
+}
+
+// StartWriteNode On this machine
+func StartWriteNode(bind string, port int) {
+	nodeService := dataputter.NewWriteNodeService(bind, port)
+	nodeService.Serve()
+}
+
+// StartReadServer On this machine to listen for read requests
+func StartReadServer(port int) {
+	fmt.Printf("Starting read server on %d\n", port)
+	dataputter.ObjectServer(port)
+}
+
+// StartRouter On this machine
+func StartRouter(config dataputter.RouterConfig) {
+	fmt.Printf("Starting router on %d\n", config.Port)
+	dataputter.RunRouterServer(config)
+}
+func showUsage() {
+	fmt.Println("USAGE: app [router|writeNode|standAlone]")
+	os.Exit(1)
+}
 func main() {
 	fmt.Println("Hello old friend")
 
 	if len(os.Args) <= 1 {
-		fmt.Println("USAGE: app [putter|loopback|router]")
-		os.Exit(1)
+		showUsage()
 	}
 
 	startupMode := os.Args[1]
 
+	config, err := dataputter.LoadRouterConfig()
+	if err != nil {
+		if err == dataputter.ErrNoConfig {
+			fmt.Printf("No configuration present, using default")
+			config = dataputter.DefaultRouterConfig
+		} else {
+			fmt.Printf("Unexpected error loading configuration: %v\n", err)
+			return
+		}
+	}
+	fmt.Printf("Starting in %s mode\n", startupMode)
 	switch startupMode {
-	// Byte Putter Router server
-	case "router", "singleNode", "standAlone":
-
-		config, err := dataputter.LoadRouterConfig()
-		if err != nil {
-			if err == dataputter.ErrNoConfig {
-				fmt.Printf("No configuration present, using default")
-				config = dataputter.DefaultRouterConfig
-			} else {
-				fmt.Printf("Unexpected error loading configuration: %v\n", err)
-				return
-			}
-		}
-
-		for _, nodeConfig := range config.Nodes {
-			// Node services which register should be stored somewhere
-			fmt.Printf("Started node on %s\n", nodeConfig)
-			nodeService := dataputter.NewWriteNodeService(
-				nodeConfig.Host,
-				nodeConfig.Port,
-			)
-			go nodeService.Serve()
-		}
-		fmt.Printf("Started %d Write Nodes\n", len(config.Nodes))
-
-		// Listin for object read requests [Router]
-		fmt.Printf("Starting read server on 5004\n")
-		go dataputter.ObjectServer(5004)
-
-		// Listen for inbound files [Router]
-		fmt.Printf("Starting router on %d\n", config.Port)
-		dataputter.RunRouterServer(config.Port)
-
-	// DataPutter Node
-	case "putter":
-		intake := make(chan dataputter.WriteTicket, 4)
-		defer close(intake)
-
-		// Handles writing ticket bytes to disk
-		// When used seriously, this handler is running
-		// on every node writing ticket bytes to its disks
-		go dataputter.WriteTicketHandler(intake)
-
-		if err := dataputter.CreateServer(":5000", intake); err != nil {
-			fmt.Printf("Error starting server: %v\n", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	// Byte Putter loopback test
-	case "loopback":
-		fmt.Println("Sending loopback data")
-		wt, err := dataputter.PutToTarget(
-			dataputter.NewWriteTicket(
-				"ABCDEFGH",
-				"12345678",
-				[]byte("So much data to write"),
-			),
-			dataputter.PutterNode{
-				Host: "127.0.0.1",
-				Port: 5000,
-			},
-		)
-		if err != nil {
-			fmt.Printf("Error writting ticket %s: %v\n", string(wt.TicketID), err)
-		}
+	case "standAlone":
+		StandAlone(config)
+	case "router":
+		go StartReadServer(5004)
+		StartRouter(config)
+	case "writeNode":
+		StartWriteNode("0.0.0.0", 5002)
+	default:
+		showUsage()
 	}
 
 	fmt.Println("Shutting down...")

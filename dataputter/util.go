@@ -42,6 +42,7 @@ func CreateObjectPath(objectID string) error {
 func StoreBytes(ticket WriteTicket) error {
 	err := CreateObjectPath(string(ticket.TicketID))
 	if err != nil {
+		log.Printf("Failed to create object path for %s: %v\n", ticket.TicketID, err)
 		return err
 	}
 	return ticket.Write()

@@ -1,6 +1,10 @@
 package dataputter
 
-import "fmt"
+import (
+	"fmt"
+
+	"log"
+)
 
 // WriteTicket Contains a TicketID and symetric key Checksum and authenticity hash
 type WriteTicket struct {
@@ -64,6 +68,7 @@ func (wt WriteTicket) String() string {
 func (wt WriteTicket) Write() error {
 	err := CreateObjectPath(string(wt.TicketID))
 	if err != nil {
+		log.Printf("Unable to write ticket %s: %v\n", string(wt.TicketID), err)
 		return err
 	}
 
